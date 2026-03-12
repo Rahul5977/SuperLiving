@@ -1385,7 +1385,10 @@ if generate_btn:
 # Shown after prompts are generated, before video generation starts.
 #  ══════════════════════════════════════════════════════════════════════════════
 
-if st.session_state.get("_sl_prompts_ready") and not st.session_state.get("_sl_final_path"):
+if (st.session_state.get("_sl_prompts_ready")
+    and not st.session_state.get("_sl_final_path")
+    and not st.session_state.get("_sl_regen_trigger")
+    and not st.session_state.get("_sl_regen_running")):
     clip_data        = st.session_state["_sl_clip_data"]
     character_sheet  = st.session_state["_sl_character_sheet"]
     photo_analyses   = st.session_state["_sl_photo_analyses"]
@@ -1475,7 +1478,10 @@ if st.session_state.get("_sl_prompts_ready") and not st.session_state.get("_sl_f
 # VIDEO GENERATION PHASE (triggered after confirm)
 # ══════════════════════════════════════════════════════════════════════════════
 
-if st.session_state.get("_sl_confirmed") and not st.session_state.get("_sl_final_path"):
+if (st.session_state.get("_sl_confirmed")
+    and not st.session_state.get("_sl_final_path")
+    and not st.session_state.get("_sl_regen_trigger")
+    and not st.session_state.get("_sl_regen_running")):
     st.session_state["_sl_confirmed"] = False
 
     clip_data         = st.session_state["_sl_clip_data"]
@@ -1710,6 +1716,222 @@ if st.session_state.get("_sl_confirmed") and not st.session_state.get("_sl_final
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# CLIP REGENERATION PHASE (triggered from results display)
+# Regenerates only selected clips, keeps the rest, then re-stitches.
+# ══════════════════════════════════════════════════════════════════════════════
+
+if st.session_state.get("_sl_regen_trigger") and not st.session_state.get("_sl_regen_running"):
+    st.session_state["_sl_regen_running"] = True
+    st.session_state["_sl_regen_trigger"] = False
+
+    regen_indices    = st.session_state["_sl_regen_indices"]      # 0-based list
+    clip_data        = st.session_state["_sl_clip_data"]
+    clip_paths       = list(st.session_state["_sl_clip_paths"])   # mutable copy
+    char_photos_raw  = st.session_state.get("_sl_char_photos_raw", [])
+    ar               = st.session_state["_sl_ar"]
+    num_clips        = st.session_state["_sl_num_clips"]
+    veo_model        = st.session_state["_sl_veo_model"]
+
+    gemini_client = genai.Client(api_key=API_KEY)
+    video_client  = genai.Client(api_key=API_KEY, http_options={"api_version": "v1alpha"})
+
+    regen_labels = ", ".join(str(idx + 1) for idx in regen_indices)
+    st.markdown("---")
+    st.markdown(f"### 🔄 Regenerating Clip(s): {regen_labels}")
+
+    MAX_RETRIES = 3
+    regen_ok = True
+
+    with st.status(f"� Regenerating {len(regen_indices)} clip(s)...", expanded=True) as status:
+        try:
+            for idx in sorted(regen_indices):
+                i    = idx            # 0-based clip index
+                clip = clip_data[i]
+                st.write(f"🎥 Regenerating clip {clip['clip']}/{num_clips}: *{clip['scene_summary']}*")
+                current_prompt = clip["prompt"]
+                operation      = None
+
+                # ── Pre-sanitize ──────────────────────────────────────────
+                with st.spinner(f"🛡️ Pre-sanitizing clip {clip['clip']}..."):
+                    try:
+                        sanitized = sanitize_prompt_for_veo(
+                            gemini_client, current_prompt, clip["clip"]
+                        )
+                        if sanitized and len(sanitized) > 100:
+                            current_prompt = sanitized
+                    except Exception:
+                        pass
+
+                for attempt in range(1, MAX_RETRIES + 1):
+                    if attempt > 1:
+                        st.warning(
+                            f"⚠️ Clip {clip['clip']} blocked/failed (attempt {attempt-1}). Rephrasing..."
+                        )
+                        with st.spinner(f"🔄 Rephrasing clip {clip['clip']}..."):
+                            current_prompt = rephrase_blocked_prompt(
+                                gemini_client, current_prompt, attempt
+                            )
+
+                    try:
+                        if i == 0:
+                            # Clip 1: I2V from original photo or text-only
+                            if char_photos_raw:
+                                ref_bytes, ref_mime, matched = get_clip_character_photo(
+                                    current_prompt, char_photos_raw
+                                )
+                                st.write(f"📎 Clip 1: using **{matched}** photo as I2V starting frame")
+                                operation = generate_clip_from_image(
+                                    video_client, veo_model, current_prompt, ar,
+                                    clip["clip"], num_clips, ref_bytes, ref_mime,
+                                )
+                            else:
+                                operation = generate_clip_text_only(
+                                    video_client, veo_model, current_prompt, ar,
+                                    clip["clip"], num_clips,
+                                )
+                        else:
+                            # Clips 2+: use last-frame I2V from the PREVIOUS clip
+                            # (which may itself be an already-regenerated clip)
+                            prev_path = clip_paths[i - 1]
+                            if not os.path.exists(prev_path):
+                                raise FileNotFoundError(
+                                    f"Previous clip {i} not found at {prev_path}"
+                                )
+                            next_summary = clip_data[i]["scene_summary"]
+                            st.write(
+                                f"🎞️ Clip {clip['clip']} (last-frame I2V): "
+                                f"continuing from clip {clip['clip']-1}"
+                            )
+                            operation, current_prompt = generate_clip_with_frame_context(
+                                video_client, gemini_client,
+                                veo_model, current_prompt, ar,
+                                clip["clip"], num_clips,
+                                prev_path, next_summary,
+                            )
+
+                    except Exception as gen_err:
+                        st.warning(f"⚠️ I2V failed: {gen_err} — falling back...")
+                        if char_photos_raw:
+                            ref_bytes, ref_mime, matched = get_clip_character_photo(
+                                current_prompt, char_photos_raw
+                            )
+                            operation = generate_clip_from_image(
+                                video_client, veo_model, current_prompt, ar,
+                                clip["clip"], num_clips, ref_bytes, ref_mime,
+                            )
+                        else:
+                            operation = generate_clip_text_only(
+                                video_client, veo_model, current_prompt, ar,
+                                clip["clip"], num_clips,
+                            )
+
+                    if operation is None:
+                        if attempt < MAX_RETRIES:
+                            continue
+                        st.error(f"❌ Clip {clip['clip']} timed out after {MAX_RETRIES} attempts.")
+                        regen_ok = False
+                        break
+
+                    try:
+                        video_obj = extract_generated_video(operation, clip["clip"])
+                    except RaiCelebrityError:
+                        if char_photos_raw:
+                            ref_bytes, ref_mime, matched = get_clip_character_photo(
+                                current_prompt, char_photos_raw
+                            )
+                            st.warning(
+                                f"🔄 Clip {clip['clip']}: celebrity flag — "
+                                f"retrying with **{matched}** photo..."
+                            )
+                            operation = generate_clip_from_image(
+                                video_client, veo_model, current_prompt, ar,
+                                clip["clip"], num_clips, ref_bytes, ref_mime,
+                            )
+                        else:
+                            operation = generate_clip_text_only(
+                                video_client, veo_model, current_prompt, ar,
+                                clip["clip"], num_clips,
+                            )
+                        if operation is None:
+                            video_obj = None
+                        else:
+                            try:
+                                video_obj = extract_generated_video(operation, clip["clip"])
+                            except (RaiCelebrityError, RaiContentError):
+                                video_obj = None
+                    except RaiContentError:
+                        video_obj = None
+
+                    if video_obj is not None:
+                        break
+                    if attempt == MAX_RETRIES:
+                        st.error(f"❌ Clip {clip['clip']} failed after {MAX_RETRIES} attempts.")
+                        regen_ok = False
+
+                if not regen_ok:
+                    break
+
+                # ── Save regenerated clip (overwrite the old file) ────────
+                clip_path   = os.path.join(TMP, f"superliving_clip_{i+1:02d}.mp4")
+                video_bytes = download_video(video_obj.uri, API_KEY)
+                with open(clip_path, "wb") as f:
+                    f.write(video_bytes)
+                clip_paths[i] = clip_path
+                st.write(f"✅ Clip {clip['clip']} regenerated ({len(video_bytes)//1024} KB)")
+
+            if regen_ok:
+                status.update(
+                    label=f"✅ {len(regen_indices)} clip(s) regenerated!",
+                    state="complete",
+                )
+            else:
+                status.update(label="❌ Some clips failed", state="error")
+
+        except Exception as e:
+            status.update(label="❌ Regeneration error", state="error")
+            st.error(f"Error: {e}")
+            st.code(traceback.format_exc())
+            regen_ok = False
+
+    # ── Re-stitch all clips (old + newly regenerated) ─────────────────────
+    if regen_ok:
+        final_path = os.path.join(TMP, "superliving_final_ad.mp4")
+        if num_clips > 1:
+            with st.status("✂️ Re-stitching all clips...", expanded=True) as status:
+                ok = stitch_clips(clip_paths, final_path)
+                status.update(
+                    label="✅ Re-stitched!" if ok else "⚠️ Stitch failed",
+                    state="complete" if ok else "error",
+                )
+                if not ok:
+                    final_path = clip_paths[0]
+        else:
+            final_path = clip_paths[0]
+
+        # ── Update session_state with new results ─────────────────────────
+        st.session_state["_sl_final_path"]  = final_path
+        st.session_state["_sl_clip_paths"]  = clip_paths
+        st.session_state["_sl_final_bytes"] = open(final_path, "rb").read()
+    else:
+        # Regeneration failed — restore the previous final video so the user
+        # can see the old result and retry individual clips.
+        prev_final = os.path.join(TMP, "superliving_final_ad.mp4")
+        if os.path.exists(prev_final):
+            st.session_state["_sl_final_path"]  = prev_final
+            st.session_state["_sl_final_bytes"] = open(prev_final, "rb").read()
+        elif clip_paths:
+            # Fallback: show first clip
+            st.session_state["_sl_final_path"]  = clip_paths[0]
+            st.session_state["_sl_final_bytes"] = open(clip_paths[0], "rb").read()
+        st.warning("⚠️ Regeneration failed for some clips. Showing previous version.")
+
+    # Clean up regen flags
+    st.session_state.pop("_sl_regen_running", None)
+    st.session_state.pop("_sl_regen_indices", None)
+    st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RESULTS DISPLAY PHASE
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1717,14 +1939,18 @@ if st.session_state.get("_sl_final_path"):
     final_path = st.session_state["_sl_final_path"]
     clip_paths = st.session_state.get("_sl_clip_paths", [])
     num_clips  = st.session_state.get("_sl_num_clips", 1)
+    clip_data  = st.session_state.get("_sl_clip_data", [])
 
     st.markdown("---")
     st.markdown("### 🎉 Your SuperLiving Ad is Ready!")
 
     if not os.path.exists(final_path):
-        st.error(f"⚠️ Output file not found at `{final_path}`. The temp file may have been cleared. Please generate again.")
+        st.error(
+            f"⚠️ Output file not found at `{final_path}`. "
+            "The temp file may have been cleared. Please generate again."
+        )
     else:
-        # Read once and cache in session_state so re-renders don't re-read from disk
+        # ── Final video player + download ─────────────────────────────────
         if "_sl_final_bytes" not in st.session_state:
             st.session_state["_sl_final_bytes"] = open(final_path, "rb").read()
         final_bytes = st.session_state["_sl_final_bytes"]
@@ -1744,16 +1970,98 @@ if st.session_state.get("_sl_final_path"):
             )
             st.caption(f"Duration: ~{num_clips * 8}s | Clips: {num_clips}")
 
-            if len(clip_paths) > 1:
-                st.markdown("**Individual clips:**")
-                for i, p in enumerate(clip_paths):
-                    if os.path.exists(p):
-                        b = open(p, "rb").read()
-                        st.download_button(
-                            f"⬇️ Clip {i+1}", data=b,
-                            file_name=f"clip_{i+1}.mp4", mime="video/mp4",
-                            key=f"dl_clip_{i}",
+        # ── Per-clip preview, edit & selective regeneration ────────────────
+        if len(clip_paths) > 1:
+            st.markdown("---")
+            st.markdown("### 🎞️ Individual Clips — Preview, Edit & Regenerate")
+            st.info(
+                "💡 **Selective regeneration:** Check the clips you want to redo, "
+                "optionally edit their prompts, then click **Regenerate Selected**. "
+                "Unchanged clips are kept as-is and everything is re-stitched automatically."
+            )
+
+            regen_checks = []
+            for i, p in enumerate(clip_paths):
+                clip_num   = i + 1
+                clip_label = (
+                    clip_data[i]["scene_summary"]
+                    if i < len(clip_data) else f"Clip {clip_num}"
+                )
+
+                with st.expander(
+                    f"Clip {clip_num} — {clip_label}",
+                    expanded=False,
+                ):
+                    col_vid, col_ctrl = st.columns([2, 1])
+
+                    with col_vid:
+                        if os.path.exists(p):
+                            st.video(open(p, "rb").read())
+                        else:
+                            st.warning(f"Clip file not found: {p}")
+
+                    with col_ctrl:
+                        # Checkbox to mark for regeneration
+                        should_regen = st.checkbox(
+                            "🔄 Regenerate this clip",
+                            key=f"regen_check_{i}",
+                            value=False,
                         )
+                        regen_checks.append(should_regen)
+
+                        # Download individual clip
+                        if os.path.exists(p):
+                            st.download_button(
+                                f"⬇️ Download Clip {clip_num}",
+                                data=open(p, "rb").read(),
+                                file_name=f"clip_{clip_num}.mp4",
+                                mime="video/mp4",
+                                key=f"dl_clip_{i}",
+                            )
+
+                    # Editable prompt (shown for all clips, but only used if regenerating)
+                    if i < len(clip_data):
+                        edited = st.text_area(
+                            f"Prompt for Clip {clip_num}",
+                            value=clip_data[i]["prompt"],
+                            height=250,
+                            key=f"regen_prompt_{i}",
+                            label_visibility="collapsed",
+                        )
+                        # Persist edits back to clip_data in session_state
+                        if edited != clip_data[i]["prompt"]:
+                            st.session_state["_sl_clip_data"][i]["prompt"] = edited
+
+            # ── Regenerate Selected button ────────────────────────────────
+            selected = [i for i, checked in enumerate(regen_checks) if checked]
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            btn_col1, btn_col2, btn_col3 = st.columns([1, 2, 1])
+            with btn_col2:
+                if selected:
+                    sel_labels = ", ".join(str(s + 1) for s in selected)
+                    regen_btn = st.button(
+                        f"🔄 Regenerate Clip(s) {sel_labels}",
+                        use_container_width=True,
+                        key="regen_selected_btn",
+                        type="primary",
+                    )
+                else:
+                    st.button(
+                        "🔄 Regenerate Selected (select clips above)",
+                        use_container_width=True,
+                        key="regen_selected_btn_disabled",
+                        disabled=True,
+                    )
+                    regen_btn = False
+
+            if regen_btn and selected:
+                st.session_state["_sl_regen_indices"] = selected
+                st.session_state["_sl_regen_trigger"] = True
+                # Clear old result so the regen phase runs cleanly
+                st.session_state.pop("_sl_final_path", None)
+                st.session_state.pop("_sl_final_bytes", None)
+                st.rerun()
 
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("🔄 Make Another Ad", use_container_width=False, key="reset_btn"):
@@ -1763,13 +2071,6 @@ if st.session_state.get("_sl_final_path"):
             st.rerun()
 
 
-# ── Footer ────────────────────────────────────────────────────────────────────
-st.markdown("<br><br>", unsafe_allow_html=True)
-st.markdown(
-    '<p style="text-align:center;color:#555;font-size:0.8rem;">'
-    'SuperLiving Internal Tool · AI-Powered Ad Generator · 8s max per clip'
-    '</p>', unsafe_allow_html=True,
-)
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown("<br><br>", unsafe_allow_html=True)
 st.markdown(
