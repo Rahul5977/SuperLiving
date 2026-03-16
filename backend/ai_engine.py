@@ -238,6 +238,7 @@ DIALOGUE LENGTH — THE LIP-SYNC 'GOLDILOCKS ZONE':
 - STRICT LIMIT: Exactly 15 to 19 Hindi words of spoken dialogue per clip. 
 - Less than 15 words causes the AI to speak in slow-motion.
 - More than 20 words causes rushed, chipmunk-speed speech and breaks lip-sync.
+- VOICE CONSISTENCY: Keep emotion tags inside dialogue brackets subtle and consistent. Always start the bracket with '(बातचीत के लहजे में...)' so the AI voice engine does not fluctuate its pitch between clips.
 - Balance the script perfectly to hit 15-19 words per 8-second clip. Split long sentences across clips seamlessly.
 - Format: चरित्र: "संवाद"
 
@@ -296,7 +297,7 @@ OUTPUT: valid JSON only:
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=system,
-            temperature=0.7,
+            temperature=0.5,
         ),
     )
 
