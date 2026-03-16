@@ -78,3 +78,27 @@ class RegenerateClipsResponse(BaseModel):
     video_url: str
     clip_paths: list[str] = Field(default_factory=list)
     message: str = ""
+
+
+# ── POST /api/agentic-pipeline ───────────────────────────────────────────────
+
+class CharacterProfile(BaseModel):
+    id: str
+    name: str
+    physical_baseline: str
+    outfit: str
+    reference_image_base64: str = Field(
+        default="",
+        description="Base64-encoded 9:16 reference face from Imagen (populated by Phase 2)",
+    )
+
+
+class AgenticPipelineRequest(BaseModel):
+    script: str = Field(..., min_length=1)
+    num_clips: int = Field(default=6, ge=1, le=8)
+
+
+class AgenticPipelineResponse(BaseModel):
+    characters: list[CharacterProfile]
+    clips: list[ClipPrompt]
+    message: str = ""

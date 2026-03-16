@@ -16,6 +16,11 @@ from fastapi.responses import FileResponse
 from google import genai
 from google.genai import types
 
+from .ai_agents import (
+    auto_generate_character_image,
+    build_director_prompts,
+    parse_script_for_characters,
+)
 from .ai_engine import (
     RaiCelebrityError,
     RaiContentError,
@@ -32,8 +37,11 @@ from .ai_engine import (
     sanitize_prompt_for_veo,
 )
 from .api_models import (
+    AgenticPipelineRequest,
+    AgenticPipelineResponse,
     AnalyzeCharactersResponse,
     CharacterAnalysis,
+    CharacterProfile,
     ClipPrompt,
     GeneratePromptsRequest,
     GeneratePromptsResponse,
@@ -89,6 +97,69 @@ def _get_clients() -> tuple:
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
+
+
+# ── Agentic Pipeline (Phases 1–3) ────────────────────────────────────────────
+
+@app.post("/api/agentic-pipeline", response_model=AgenticPipelineResponse)
+async def agentic_pipeline(request: AgenticPipelineRequest):
+    """
+    Orchestrates Phases 1-3 of the SuperLiving Auto-Director pipeline:
+      Phase 1 — Parser Agent: Gemini extracts characters from the script.
+      Phase 2 — Imagen Agent: generates 9:16 reference faces for each character.
+      Phase 3 — Director Agent: Gemini splits the script into Veo 3.1 clip prompts.
+
+    Returns characters (with reference images) + clip prompts for Phase 4 (Human Review).
+    """
+    gemini_client, _ = _get_clients()
+    api_key = _get_api_key()
+
+    # ── Phase 1: Parse characters from script ─────────────────────────────
+    logger.info("🎬 Phase 1 — Parsing characters from script…")
+    try:
+        characters_json = parse_script_for_characters(gemini_client, request.script)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Phase 1 (Parser Agent) failed: {e}")
+
+    # ── Phase 2: Generate reference images for each character ─────────────
+    logger.info("🖼️ Phase 2 — Generating reference images via Imagen…")
+    character_profiles: list[CharacterProfile] = []
+    for char in characters_json.get("characters", []):
+        ref_image_b64 = ""
+        try:
+            ref_image_b64 = auto_generate_character_image(
+                api_key,
+                char.get("physical_baseline", ""),
+                char.get("outfit", ""),
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Imagen failed for {char.get('name', '?')}: {e}")
+
+        character_profiles.append(CharacterProfile(
+            id=char.get("id", ""),
+            name=char.get("name", ""),
+            physical_baseline=char.get("physical_baseline", ""),
+            outfit=char.get("outfit", ""),
+            reference_image_base64=ref_image_b64,
+        ))
+
+    # ── Phase 3: Build director prompts ───────────────────────────────────
+    logger.info("🎥 Phase 3 — Building director prompts…")
+    try:
+        clips = build_director_prompts(
+            gemini_client, request.script, characters_json, request.num_clips,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Phase 3 (Director Agent) failed: {e}")
+
+    return AgenticPipelineResponse(
+        characters=character_profiles,
+        clips=[ClipPrompt(**c) for c in clips],
+        message=(
+            f"Pipeline complete — {len(character_profiles)} character(s) extracted, "
+            f"{len(clips)} clip prompt(s) generated. Ready for Phase 4 (Human Review)."
+        ),
+    )
 
 
 @app.post("/api/analyze-characters", response_model=AnalyzeCharactersResponse)
