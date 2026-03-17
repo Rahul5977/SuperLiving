@@ -1,8 +1,6 @@
 """
-FastAPI application — routes for the SuperLiving AI Video Ad Generator.
-
-All AI logic lives in ai_engine.py, all FFmpeg logic in video_engine.py.
-This file only wires up HTTP routes and manages session state (temp files).
+AI logic -> ai_engine.py
+FFmpeg logic -> video_engine.py.
 """
 
 import logging
@@ -59,7 +57,6 @@ logger = logging.getLogger(__name__)
 
 TMP = tempfile.gettempdir()
 
-# ── FastAPI App ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="SuperLiving Ad Generator API",
     version="1.0.0",
@@ -73,8 +70,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_api_key() -> str:
     key = os.getenv("GOOGLE_API_KEY", "")
@@ -90,16 +85,12 @@ def _get_clients() -> tuple:
     return gemini_client, video_client
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ROUTES
-# ══════════════════════════════════════════════════════════════════════════════
-
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
 
 
-# ── Agentic Pipeline (Phases 1–3) ────────────────────────────────────────────
+# agentic pipeline endpoint orchestrates the entire Phase 1-3 flow for maximum automation, returning all data needed for Phase 4 human review. This is the main "magic" endpoint that ties everything together.
 
 @app.post("/api/agentic-pipeline", response_model=AgenticPipelineResponse)
 async def agentic_pipeline(request: AgenticPipelineRequest):
@@ -114,14 +105,14 @@ async def agentic_pipeline(request: AgenticPipelineRequest):
     gemini_client, _ = _get_clients()
     api_key = _get_api_key()
 
-    # ── Phase 1: Parse characters from script ─────────────────────────────
+    # Phase 1: Parse characters from script
     logger.info("🎬 Phase 1 — Parsing characters from script…")
     try:
         characters_json = parse_script_for_characters(gemini_client, request.script)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Phase 1 (Parser Agent) failed: {e}")
 
-    # ── Phase 2: Generate reference images for each character ─────────────
+    # Phase 2: Generate reference images for each character
     logger.info("🖼️ Phase 2 — Generating reference images via Imagen…")
     character_profiles: list[CharacterProfile] = []
     for char in characters_json.get("characters", []):
@@ -143,7 +134,7 @@ async def agentic_pipeline(request: AgenticPipelineRequest):
             reference_image_base64=ref_image_b64,
         ))
 
-    # ── Phase 3: Build director prompts ───────────────────────────────────
+    # Phase 3: Build director prompts 
     logger.info("🎥 Phase 3 — Building director prompts…")
     try:
         clips = build_director_prompts(
@@ -482,8 +473,7 @@ async def regenerate_clips(request: RegenerateClipsRequest):
     )
 
 
-# ── Serve generated videos ───────────────────────────────────────────────────
-
+# Serve generated videos 
 @app.get("/api/video/{filename}")
 async def serve_video(filename: str):
     """Serve a generated video file from the temp directory."""

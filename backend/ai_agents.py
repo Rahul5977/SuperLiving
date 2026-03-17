@@ -1,13 +1,3 @@
-"""
-Agentic Pipeline — Phases 1, 2 & 3 for SuperLiving Auto-Director.
-
-Phase 1 (Parser Agent):   Gemini reads the ad script and extracts characters.
-Phase 2 (Imagen Agent):   Backend calls Google Imagen to generate RAI-safe
-                          9:16 reference faces for those characters.
-Phase 3 (Director Agent): Gemini splits the script into 8-second video prompts
-                          for Google Veo 3.1.
-"""
-
 import base64
 import json
 import logging
@@ -18,11 +8,7 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 # PHASE 1 — Parser Agent
-# ══════════════════════════════════════════════════════════════════════════════
-
 def parse_script_for_characters(client, script: str) -> dict:
     """
     Use Gemini to read the ad script and output JSON containing an array of
@@ -68,11 +54,7 @@ def parse_script_for_characters(client, script: str) -> dict:
     data = json.loads(raw)
     return data
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 # PHASE 2 — Imagen Agent
-# ══════════════════════════════════════════════════════════════════════════════
-
 def auto_generate_character_image(api_key: str, physical_baseline: str, outfit: str) -> str:
     """
     Call the Google Imagen 3 API to generate a photorealistic 9:16 portrait.
@@ -84,13 +66,15 @@ def auto_generate_character_image(api_key: str, physical_baseline: str, outfit: 
     )
 
     prompt = (
-    f"A raw, unedited smartphone photo of an everyday Indian person. "
-    f"{physical_baseline}. Wearing {outfit}. "
-    f"Shot on iPhone 14 front camera, selfie-style framing, candid and authentic. "
-    f"Natural indoor lighting from a nearby window. "
-    f"Ultra-realistic skin texture with visible pores, slight imperfections, and natural peach fuzz. "
-    f"No makeup filter, completely unretouched, non-celebrity, ordinary person, UGC style ad footage."
-)
+        f"Hyper-realistic smartphone photo of an everyday Indian person. "
+        f"{physical_baseline}. Wearing {outfit}. "
+        f"About 70% of the body is visible (head to knees), centered in frame. "
+        f"Casual indoor setting, lived-in and not staged. "
+        f"Shot on an ordinary smartphone: uneven exposure, slight grain, natural daylight. "
+        f"Ultra-realistic natural skin texture, visible pores, no airbrushing. "
+        f"No cinematic lighting, no dramatic shadows, completely unretouched. "
+        f"Looks like a real person recording a high-trust UGC video at home."
+    )
 
     payload = json.dumps({
         "instances": [{"prompt": prompt}],
@@ -126,19 +110,13 @@ def auto_generate_character_image(api_key: str, physical_baseline: str, outfit: 
     return b64_image
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # PHASE 3 — Director Agent
-# ══════════════════════════════════════════════════════════════════════════════
-
 def build_director_prompts(client, script: str, characters_json: dict, num_clips: int) -> list:
     """
-    Build Veo 3.1-ready clip prompts using the exact system prompt mandated
-    by the SuperLiving Auto-Director specification.
-
     Returns a list of clip dicts: [{clip, scene_summary, last_frame, prompt}].
     """
 
-    # ── Build character context block ─────────────────────────────────────
+    # Build character context block
     char_lines = []
     for char in characters_json.get("characters", []):
         char_lines.append(
@@ -149,8 +127,7 @@ def build_director_prompts(client, script: str, characters_json: dict, num_clips
         )
     character_block = "\n".join(char_lines)
 
-    # 🚨 CRITICAL: This system prompt is copied VERBATIM from the spec.
-    # DO NOT modify the text, rules, or constraints inside this block.
+    # Build system prompt
     system = f"""You are an expert AI video director creating prompts for Google Veo 3.1.
 
 TASK: Split the given SuperLiving ad script into exactly {num_clips} sequential 8-second clip prompts.
