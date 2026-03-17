@@ -5,10 +5,10 @@ FFmpeg logic -> video_engine.py.
 
 import logging
 import os
-import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 
 from dotenv import load_dotenv
@@ -52,7 +52,7 @@ from .api_models import (
     RegenerateClipsRequest,
     RegenerateClipsResponse,
 )
-from .video_engine import CTA_NORMALIZE_FILTER, _get_ffmpeg, concat_with_normalized_cta, stitch_clips
+from .video_engine import stitch_clips
 
 load_dotenv()
 
@@ -60,7 +60,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TMP = tempfile.gettempdir()
-CTA_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 
 app = FastAPI(
     title="SuperLiving Ad Generator API",
@@ -75,55 +74,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def _normalize_cta_video(cta_source_path: str) -> tuple[str | None, float]:
-    """Normalize CTA to target spec and return (path, duration_seconds)."""
-    ffmpeg_bin = shutil.which("ffmpeg")
-    if ffmpeg_bin is None:
-        try:
-            import imageio_ffmpeg
-            ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
-        except ImportError:
-            ffmpeg_bin = None
-
-    if not ffmpeg_bin:
-        logger.warning("⚠️ FFmpeg not found, cannot normalize CTA")
-        return None, 0.0
-
-    cta_temp_path = os.path.join(TMP, f"superliving_cta_{uuid.uuid4().hex}.mp4")
-
-    probe_result = subprocess.run(
-        [ffmpeg_bin, "-i", cta_source_path],
-        capture_output=True, text=True,
-    )
-    duration_match = CTA_DURATION_RE.search(probe_result.stderr)
-    cta_duration = 0.0
-    if duration_match:
-        cta_duration = (
-            int(duration_match.group(1)) * 3600
-            + int(duration_match.group(2)) * 60
-            + float(duration_match.group(3))
-        )
-
-    norm_result = subprocess.run(
-        [ffmpeg_bin, "-y", "-i", cta_source_path,
-         "-vf", CTA_NORMALIZE_FILTER,
-         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-         "-pix_fmt", "yuv420p",  # pix_fmt enforces yuv420p; format filter unnecessary
-         "-af", "aresample=async=1,apad",
-         "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
-         "-shortest",
-         cta_temp_path],
-        capture_output=True, text=True,
-    )
-
-    if norm_result.returncode == 0 and os.path.exists(cta_temp_path):
-        return cta_temp_path, cta_duration
-
-    logger.warning("⚠️ CTA normalization failed, skipping CTA")
-    logger.debug(f"FFmpeg error: {norm_result.stderr[-500:]}")
-    return None, 0.0
-
 
 def _get_api_key() -> str:
     key = os.getenv("GOOGLE_API_KEY", "")
@@ -298,6 +248,15 @@ async def generate_video(request: GenerateVideoRequest):
     clip_paths: list[str] = []
     MAX_RETRIES = 3
 
+    # ── Resolve anchor image for Clip 1 (first character's reference photo) ──
+    anchor_image_b64: str = ""
+    if hasattr(request, "characters") and request.characters:
+        for char in request.characters:
+            if getattr(char, "reference_image_base64", ""):
+                anchor_image_b64 = char.reference_image_base64
+                logger.info(f"🖼️ Clip 1 anchor image found for '{char.name}'")
+                break
+
     try:
         for i, clip in enumerate(request.clips):
             logger.info(f"🎥 Clip {clip.clip}/{request.num_clips}: {clip.scene_summary}")
@@ -322,11 +281,21 @@ async def generate_video(request: GenerateVideoRequest):
 
                 try:
                     if i == 0:
-                        # Clip 1: text-only (no photos in this route)
-                        operation = generate_clip_text_only(
-                            video_client, request.veo_model, current_prompt,
-                            request.aspect_ratio, clip.clip, request.num_clips,
-                        )
+                        # BUG 2 FIX — Clip 1: use anchor reference image if available,
+                        # otherwise fall back to text-only.
+                        if anchor_image_b64:
+                            logger.info("🖼️ Clip 1: generating from anchor reference image (I2V)")
+                            operation = generate_clip_from_image(
+                                video_client, request.veo_model, current_prompt,
+                                request.aspect_ratio, clip.clip, request.num_clips,
+                                anchor_image_b64,
+                            )
+                        else:
+                            logger.info("📝 Clip 1: no anchor image — using text-only generation")
+                            operation = generate_clip_text_only(
+                                video_client, request.veo_model, current_prompt,
+                                request.aspect_ratio, clip.clip, request.num_clips,
+                            )
                     else:
                         # Clips 2+: last-frame I2V
                         prev_path = clip_paths[i - 1]
@@ -338,7 +307,21 @@ async def generate_video(request: GenerateVideoRequest):
                             prev_path, next_summary,
                         )
                 except Exception as gen_err:
-                    logger.warning(f"⚠️ Generation failed: {gen_err} — falling back to text-only")
+                    err_str = str(gen_err)
+                    # BUG 1 FIX — 503 / Deadline: sleep and retry the SAME function;
+                    # do NOT drop to text-only and lose the image context.
+                    if ("503" in err_str or "Deadline" in err_str) and attempt < MAX_RETRIES:
+                        logger.warning(
+                            f"⚠️ Clip {clip.clip} transient error (attempt {attempt}): "
+                            f"{err_str[:120]} — sleeping 10s and retrying with same context…"
+                        )
+                        time.sleep(10)
+                        continue
+                    # Non-503 error, or retries exhausted — fall back to text-only
+                    logger.warning(
+                        f"⚠️ Clip {clip.clip} generation failed (attempt {attempt}): "
+                        f"{err_str[:120]} — falling back to text-only"
+                    )
                     operation = generate_clip_text_only(
                         video_client, request.veo_model, current_prompt,
                         request.aspect_ratio, clip.clip, request.num_clips,
@@ -391,42 +374,8 @@ async def generate_video(request: GenerateVideoRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Video generation error: {e}")
 
-    cta_added = False  # becomes True only if CTA normalization succeeds
-    cta_norm_path = None
-    # ── Append CTA video ──────────────────────────────────────────────────
-    cta_source_path = os.path.join(os.path.dirname(__file__), "assets", "Male CTA 9x16.mp4")
-    if os.path.exists(cta_source_path):
-        try:
-            # Normalize CTA to match generated clips (30fps, yuv420p, AAC audio)
-            cta_norm_path, cta_duration = _normalize_cta_video(cta_source_path)
-            if cta_norm_path:
-                clip_paths.append(cta_norm_path)
-                cta_added = True
-                logger.info(f"✅ CTA normalized and appended ({os.path.getsize(cta_norm_path)//1024} KB, ~{cta_duration:.1f}s)")
-        except Exception as cta_err:
-            logger.warning(f"⚠️ CTA processing failed: {cta_err} — proceeding without CTA")
-    else:
-        logger.warning(f"⚠️ CTA video not found at {cta_source_path} — proceeding without CTA")
-
     # ── Stitch ────────────────────────────────────────────────────────────
     final_path = os.path.join(TMP, "superliving_final_ad.mp4")
-    if len(clip_paths) > 1 and cta_added and cta_norm_path:  # at least one generated clip + CTA
-        # clip_paths already includes the normalized CTA; reuse without re-encoding
-        # Fast path: stream-copy concat with CTA pre-normalization to avoid
-        # decoder crashes on players (CTA appended last).
-        fast_ok = False
-        try:
-            fast_ok = concat_with_normalized_cta(clip_paths, final_path, cta_is_normalized=True)
-        except Exception as e:
-            logger.warning(f"⚠️ Fast concat failed, falling back to cinematic stitch: {e}")
-
-        if fast_ok:
-            return GenerateVideoResponse(
-                video_url=f"/api/video/{os.path.basename(final_path)}",
-                clip_paths=clip_paths,
-                message=f"Successfully generated {request.num_clips} clip(s).",
-            )
-
     if len(clip_paths) > 1:
         ok = stitch_clips(clip_paths, final_path)
         if not ok:
@@ -479,10 +428,26 @@ async def regenerate_clips(request: RegenerateClipsRequest):
 
                 try:
                     if i == 0:
-                        operation = generate_clip_text_only(
-                            video_client, request.veo_model, current_prompt,
-                            request.aspect_ratio, clip.clip, request.num_clips,
-                        )
+                        # BUG 2 FIX — Clip 1: use anchor reference image if available.
+                        anchor_image_b64 = ""
+                        if hasattr(request, "characters") and request.characters:
+                            for char in request.characters:
+                                if getattr(char, "reference_image_base64", ""):
+                                    anchor_image_b64 = char.reference_image_base64
+                                    break
+                        if anchor_image_b64:
+                            logger.info("🖼️ Regen Clip 1: generating from anchor reference image (I2V)")
+                            operation = generate_clip_from_image(
+                                video_client, request.veo_model, current_prompt,
+                                request.aspect_ratio, clip.clip, request.num_clips,
+                                anchor_image_b64,
+                            )
+                        else:
+                            logger.info("📝 Regen Clip 1: no anchor image — using text-only generation")
+                            operation = generate_clip_text_only(
+                                video_client, request.veo_model, current_prompt,
+                                request.aspect_ratio, clip.clip, request.num_clips,
+                            )
                     else:
                         prev_path = clip_paths[i - 1]
                         next_summary = request.clips[i].scene_summary
@@ -493,7 +458,18 @@ async def regenerate_clips(request: RegenerateClipsRequest):
                             prev_path, next_summary,
                         )
                 except Exception as gen_err:
-                    logger.warning(f"⚠️ Regen failed: {gen_err} — text-only fallback")
+                    err_str = str(gen_err)
+                    # BUG 1 FIX — 503 / Deadline: sleep and retry the SAME function;
+                    # do NOT drop to text-only and lose the image context.
+                    if ("503" in err_str or "Deadline" in err_str) and attempt < MAX_RETRIES:
+                        logger.warning(
+                            f"⚠️ Regen Clip {clip.clip} transient error (attempt {attempt}): "
+                            f"{err_str[:120]} — sleeping 10s and retrying with same context…"
+                        )
+                        time.sleep(10)
+                        continue
+                    # Non-503 error, or retries exhausted — fall back to text-only
+                    logger.warning(f"⚠️ Regen Clip {clip.clip} failed: {err_str[:120]} — text-only fallback")
                     operation = generate_clip_text_only(
                         video_client, request.veo_model, current_prompt,
                         request.aspect_ratio, clip.clip, request.num_clips,
@@ -545,40 +521,8 @@ async def regenerate_clips(request: RegenerateClipsRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Regeneration error: {e}")
 
-    cta_added = False  # becomes True only if CTA normalization succeeds
-    cta_norm_path = None
-    # ── Append CTA video ──────────────────────────────────────────────────
-    cta_source_path = os.path.join(os.path.dirname(__file__), "assets", "Male CTA 9x16.mp4")
-    if os.path.exists(cta_source_path):
-        try:
-            # Normalize CTA to match generated clips (30fps, yuv420p, AAC audio)
-            cta_norm_path, cta_duration = _normalize_cta_video(cta_source_path)
-            if cta_norm_path:
-                clip_paths.append(cta_norm_path)
-                cta_added = True
-                logger.info(f"✅ CTA normalized and appended ({os.path.getsize(cta_norm_path)//1024} KB, ~{cta_duration:.1f}s)")
-        except Exception as cta_err:
-            logger.warning(f"⚠️ CTA processing failed: {cta_err} — proceeding without CTA")
-    else:
-        logger.warning(f"⚠️ CTA video not found at {cta_source_path} — proceeding without CTA")
-
     # ── Re-stitch ─────────────────────────────────────────────────────────
     final_path = os.path.join(TMP, "superliving_final_ad.mp4")
-    if len(clip_paths) > 1 and cta_added and cta_norm_path:  # at least one regenerated clip + CTA
-        # clip_paths already includes the normalized CTA; reuse without re-encoding
-        fast_ok = False
-        try:
-            fast_ok = concat_with_normalized_cta(clip_paths, final_path, cta_is_normalized=True)
-        except Exception as e:
-            logger.warning(f"⚠️ Fast concat failed during regenerate, falling back: {e}")
-
-        if fast_ok:
-            return RegenerateClipsResponse(
-                video_url=f"/api/video/{os.path.basename(final_path)}",
-                clip_paths=clip_paths,
-                message=f"Successfully regenerated {len(request.clip_indices)} clip(s).",
-            )
-
     if len(clip_paths) > 1:
         ok = stitch_clips(clip_paths, final_path)
         if not ok:

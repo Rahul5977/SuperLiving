@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 # ── Portable temp dir ─────────────────────────────────────────────────────────
 TMP = tempfile.gettempdir()
-CTA_NORMALIZE_FILTER = "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30"  # pixel format handled via -pix_fmt yuv420p
 
 
 def _get_ffmpeg() -> str:
@@ -36,89 +35,6 @@ def _get_ffmpeg() -> str:
     if ffmpeg_bin is None:
         raise RuntimeError("ffmpeg not found.")
     return ffmpeg_bin
-
-
-def concat_with_normalized_cta(clip_paths: list[str], output_path: str, cta_is_normalized: bool = False) -> bool:
-    """
-    Fast concat pipeline for AI clips + CTA.
-
-    CTA is pre-normalized to a stable spec (H.264, yuv420p, 30fps,
-    AAC 44.1k stereo, video_track_timescale 90000) even if upstream clips
-    use a different cadence. If cta_is_normalized=True, the CTA is assumed
-    to already meet these specs and will be stream-copied. Normalization
-    happens before running the concat demuxer with stream copy. This
-    prevents header/decoder issues on local players when the CTA's
-    technical profile differs from the generated clips.
-    """
-    if len(clip_paths) < 2:
-        raise ValueError("clip_paths must include at least one AI clip and the CTA as the final entry.")
-
-    ffmpeg_bin = _get_ffmpeg()
-
-    # Ensure all sources exist before doing any work
-    for p in clip_paths:
-        if not os.path.exists(p):
-            raise FileNotFoundError(f"Input clip not found: {p}")
-
-    input_clips, cta_clip = clip_paths[:-1], clip_paths[-1]
-    unique_suffix = uuid.uuid4().hex  # UUID avoids collisions across concurrent requests
-    normalized_cta = os.path.join(TMP, f"cta_normalized_concat_{unique_suffix}.mp4")
-    concat_list = os.path.join(TMP, f"cta_concat_list_{unique_suffix}.txt")
-    created_cta = False
-
-    try:
-        # Normalize CTA to the required spec unless already normalized
-        if cta_is_normalized:
-            normalized_cta = cta_clip
-        else:
-            norm_cmd = [
-                ffmpeg_bin,
-                "-y",
-                "-i", cta_clip,
-                # Single vf chain keeps scaling (even dims) + target fps together
-                "-vf", CTA_NORMALIZE_FILTER,
-                "-c:v", "libx264",
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac",
-                "-ar", "44100",
-                "-ac", "2",
-                "-video_track_timescale", "90000",
-                normalized_cta,
-            ]
-            subprocess.run(norm_cmd, check=True, capture_output=True, text=True)
-            created_cta = True
-
-        # Build concat list with normalized CTA
-        with open(concat_list, "w") as f:
-            for src in input_clips + [normalized_cta]:
-                safe_path = os.path.abspath(src).replace("\\", "/")
-                f.write(f"file '{safe_path}'\n")
-
-        concat_cmd = [
-            ffmpeg_bin,
-            "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", concat_list,
-            "-c", "copy",
-            output_path,
-        ]
-        subprocess.run(concat_cmd, check=True, capture_output=True, text=True)
-        return True
-
-    except subprocess.CalledProcessError as exc:
-        logger.error("FFmpeg concat pipeline failed: %s", exc.stderr or exc.stdout or exc)
-        return False
-    except Exception:
-        logger.error("Unexpected error during CTA concat:\n%s", traceback.format_exc())
-        return False
-    finally:
-        for tmp_path in filter(None, (concat_list, normalized_cta if created_cta else None)):
-            try:
-                if tmp_path and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except Exception as cleanup_err:
-                logger.debug("Cleanup of temp file failed: %s", cleanup_err)
 
 
 def extract_last_n_frames(video_path: str, n: int = 10) -> list:
