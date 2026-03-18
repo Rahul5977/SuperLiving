@@ -61,6 +61,14 @@ logger = logging.getLogger(__name__)
 
 TMP = tempfile.gettempdir()
 
+
+def _unique_video_path(tag: str) -> str:
+    return os.path.join(
+        TMP,
+        f"video_{tag}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.mp4",
+    )
+
+
 app = FastAPI(
     title="SuperLiving Ad Generator API",
     version="1.0.0",
@@ -367,7 +375,7 @@ async def generate_video(request: GenerateVideoRequest):
                     )
 
             # ── Save clip ─────────────────────────────────────────────────
-            clip_path = os.path.join(TMP, f"superliving_clip_{i+1:02d}.mp4")
+            clip_path = _unique_video_path(f"clip_{i+1:02d}")
             video_bytes = download_video(video_obj.uri, api_key)
             with open(clip_path, "wb") as f:
                 f.write(video_bytes)
@@ -380,7 +388,7 @@ async def generate_video(request: GenerateVideoRequest):
         raise HTTPException(status_code=500, detail=f"Video generation error: {e}")
 
     # ── Stitch ────────────────────────────────────────────────────────────
-    final_path = os.path.join(TMP, "superliving_final_ad.mp4")
+    final_path = _unique_video_path("final")
     if len(clip_paths) > 1:
         ok = stitch_clips(clip_paths, final_path)
         if not ok:
@@ -389,7 +397,7 @@ async def generate_video(request: GenerateVideoRequest):
         final_path = clip_paths[0]
 
     # append CTA
-    cta_appended_path = os.path.join(TMP, "superliving_final_with_cta.mp4")
+    cta_appended_path = _unique_video_path("final_with_cta")
     base_dir = os.path.dirname(os.path.abspath(__file__))
     cta_video_path = os.path.join(base_dir, "assets", "cta.mp4")
     
@@ -532,7 +540,7 @@ async def regenerate_clips(request: RegenerateClipsRequest):
                     )
 
             # ── Save regenerated clip ─────────────────────────────────
-            clip_path = os.path.join(TMP, f"superliving_clip_{i+1:02d}.mp4")
+            clip_path = _unique_video_path(f"clip_{i+1:02d}")
             video_bytes = download_video(video_obj.uri, api_key)
             with open(clip_path, "wb") as f:
                 f.write(video_bytes)
@@ -545,7 +553,7 @@ async def regenerate_clips(request: RegenerateClipsRequest):
         raise HTTPException(status_code=500, detail=f"Regeneration error: {e}")
 
     # ── Re-stitch ─────────────────────────────────────────────────────────
-    final_path = os.path.join(TMP, "superliving_final_ad.mp4")
+    final_path = _unique_video_path("regen_final")
     if len(clip_paths) > 1:
         ok = stitch_clips(clip_paths, final_path)
         if not ok:
@@ -554,7 +562,7 @@ async def regenerate_clips(request: RegenerateClipsRequest):
         final_path = clip_paths[0]
 
     # append CTA
-    cta_appended_path = os.path.join(TMP, f"superliving_regen_with_cta_{uuid.uuid4().hex[:6]}.mp4")
+    cta_appended_path = _unique_video_path("regen_with_cta")
     base_dir = os.path.dirname(os.path.abspath(__file__))
     cta_video_path = os.path.join(base_dir, "assets", "cta.mp4")
 
