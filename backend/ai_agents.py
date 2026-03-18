@@ -168,6 +168,24 @@ CONTINUITY RULES:
 - The CONTINUING FROM block MUST include a full background inventory: list every object visible behind the character (shelf items by position, wall color, counter surface, light direction). This prevents Veo from hallucinating new background objects.
 - End every prompt with: "LAST FRAME: [exact position, expression, camera, framing, AND full background object list]"
 
+CLIP PROMPT STRUCTURE — MANDATORY SECTIONS (every section must appear in every clip):
+1. CONTINUING FROM: [Clips 2+ only — includes full background inventory]
+2. OUTFIT & APPEARANCE: [Copy locked outfit + appearance verbatim — do NOT paraphrase]
+3. LOCATION: [Copy LOCKED BACKGROUND verbatim from clip 1 + freeze line — identical in every clip]
+4. ACTION: [ONE emotion OR one physical action — never both simultaneously]
+5. DIALOGUE: [Strictly 15-19 Hindi words. Count them. Format: चरित्र: "(बातचीत के लहजे में...) संवाद"]
+6. AUDIO: [Same BGM mood/tempo throughout — never change music style mid-video]
+7. CAMERA: [Static angle + distance]. ALWAYS include: "Ultra-sharp focus, 8k resolution, highly detailed. कैमरा बिल्कुल स्थिर।"
+8. LIGHTING: [IDENTICAL to clip 1 — same direction, color temperature, quality]. ALWAYS include: "Cinematic contrast, photorealistic skin texture, extremely crisp."
+9. LAST FRAME: [Character: exact position + expression + hand placement. Background: full object inventory. Camera: angle + distance. Lighting: direction + temperature.]
+
+CHARACTER DRIFT PREVENTION — IRON RULES:
+- The character's face, hair, skin tone, and build MUST be pixel-identical across all clips. Never vary age, weight, or features.
+- NEVER describe the character's emotion in the appearance block — only in the ACTION block.
+- NEVER write "she now looks", "he appears more", "looking confident now" — these trigger temporal drift.
+- Lip color, eye makeup, earrings — if present in clip 1, state them verbatim in every clip's OUTFIT & APPEARANCE block.
+- Lighting must be LOCKED to clip 1. If clip 1 has soft left-side light, every clip must state "soft light from left side" — Veo will hallucinate new lighting if you omit this.
+
 AUDIO-VISUAL SYNC:
 Add to every prompt: "Audio-visual sync: match lip movements precisely to spoken dialogue."
 
@@ -193,7 +211,7 @@ OUTPUT: valid JSON only:
         contents=[types.Part.from_text(text=user_text)],
         config=types.GenerateContentConfig(
             system_instruction=system,
-            temperature=0.4,
+            temperature=0.2,  # Low temperature = maximum rule adherence, minimum hallucination
         ),
     )
 

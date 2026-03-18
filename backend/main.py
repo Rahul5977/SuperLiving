@@ -308,16 +308,21 @@ async def generate_video(request: GenerateVideoRequest):
                         )
                 except Exception as gen_err:
                     err_str = str(gen_err)
-                    # BUG 1 FIX — 503 / Deadline: sleep and retry the SAME function;
-                    # do NOT drop to text-only and lose the image context.
-                    if ("503" in err_str or "Deadline" in err_str) and attempt < MAX_RETRIES:
+                    # Transient network errors — sleep and retry the SAME I2V call.
+                    # NEVER drop to text-only on network errors — that loses the I2V anchor
+                    # and causes character/background drift in subsequent clips.
+                    RETRYABLE = ("503", "Deadline", "Broken pipe", "Errno 32",
+                                 "ConnectionReset", "RemoteDisconnected", "Connection reset",
+                                 "timed out", "timeout")
+                    if any(e in err_str for e in RETRYABLE) and attempt < MAX_RETRIES:
+                        wait = 15 * attempt  # 15s → 30s → 45s
                         logger.warning(
-                            f"⚠️ Clip {clip.clip} transient error (attempt {attempt}): "
-                            f"{err_str[:120]} — sleeping 10s and retrying with same context…"
+                            f"⚠️ Clip {clip.clip} transient network error (attempt {attempt}): "
+                            f"{err_str[:120]} — sleeping {wait}s and retrying with same I2V context…"
                         )
-                        time.sleep(10)
+                        time.sleep(wait)
                         continue
-                    # Non-503 error, or retries exhausted — fall back to text-only
+                    # Non-retryable error or retries exhausted — fall back to text-only
                     logger.warning(
                         f"⚠️ Clip {clip.clip} generation failed (attempt {attempt}): "
                         f"{err_str[:120]} — falling back to text-only"
@@ -473,16 +478,20 @@ async def regenerate_clips(request: RegenerateClipsRequest):
                         )
                 except Exception as gen_err:
                     err_str = str(gen_err)
-                    # BUG 1 FIX — 503 / Deadline: sleep and retry the SAME function;
-                    # do NOT drop to text-only and lose the image context.
-                    if ("503" in err_str or "Deadline" in err_str) and attempt < MAX_RETRIES:
+                    # Transient network errors — sleep and retry the SAME I2V call.
+                    # NEVER drop to text-only on network errors — that loses the I2V anchor.
+                    RETRYABLE = ("503", "Deadline", "Broken pipe", "Errno 32",
+                                 "ConnectionReset", "RemoteDisconnected", "Connection reset",
+                                 "timed out", "timeout")
+                    if any(e in err_str for e in RETRYABLE) and attempt < MAX_RETRIES:
+                        wait = 15 * attempt  # 15s → 30s → 45s
                         logger.warning(
-                            f"⚠️ Regen Clip {clip.clip} transient error (attempt {attempt}): "
-                            f"{err_str[:120]} — sleeping 10s and retrying with same context…"
+                            f"⚠️ Regen Clip {clip.clip} transient network error (attempt {attempt}): "
+                            f"{err_str[:120]} — sleeping {wait}s and retrying with same I2V context…"
                         )
-                        time.sleep(10)
+                        time.sleep(wait)
                         continue
-                    # Non-503 error, or retries exhausted — fall back to text-only
+                    # Non-retryable or retries exhausted — fall back to text-only
                     logger.warning(f"⚠️ Regen Clip {clip.clip} failed: {err_str[:120]} — text-only fallback")
                     operation = generate_clip_text_only(
                         video_client, request.veo_model, current_prompt,

@@ -241,16 +241,23 @@ CONTINUITY RULES:
 - The CONTINUING FROM block MUST include a full background inventory: list every object visible behind the character (shelf items by position, wall color, counter surface, light direction). This prevents Veo from hallucinating new background objects.
 - End every prompt with: "LAST FRAME: [exact position, expression, camera, framing, AND full background object list]"
 
-CLIP PROMPT STRUCTURE:
-1. CONTINUING FROM: [For clips 2+]
-2. OUTFIT & APPEARANCE: [Locked, verbatim]
-3. LOCATION: [Locked, no panning]
-4. ACTION: [Emotion + strictly isolated body movement]
-5. DIALOGUE: [Strictly 15-19 words]
-6. AUDIO: [BGM consistent]
-7. CAMERA: [Describe angle]. MUST include: "Ultra-sharp focus, 8k resolution, highly detailed."
-8. LIGHTING: [Describe lighting]. MUST include: "Cinematic contrast, photorealistic skin texture, extremely crisp."
-9. LAST FRAME: [Anchor for next clip]
+CLIP PROMPT STRUCTURE — MANDATORY SECTIONS (every section must appear in every clip):
+1. CONTINUING FROM: [Clips 2+ only — vision-verified, includes full background inventory]
+2. OUTFIT & APPEARANCE: [Copy locked outfit + appearance verbatim — do NOT paraphrase]
+3. LOCATION: [Copy LOCKED BACKGROUND verbatim from clip 1 + freeze line — identical in every clip]
+4. ACTION: [ONE emotion OR one physical action — never both simultaneously. Body stays still during emotion changes.]
+5. DIALOGUE: [Strictly 15-19 Hindi words. Count them. Format: चरित्र: "(बातचीत के लहजे में...) संवाद"]
+6. AUDIO: [Same BGM mood/tempo as previous clip — never change the music style mid-video]
+7. CAMERA: [Static shot angle + distance]. ALWAYS include: "Ultra-sharp focus, 8k resolution, highly detailed. कैमरा बिल्कुल स्थिर।"
+8. LIGHTING: [Same lighting as clip 1 — direction, color temperature, quality must match]. ALWAYS include: "Cinematic contrast, photorealistic skin texture, extremely crisp."
+9. LAST FRAME: [Character: exact position + expression + hand placement. Background: full object inventory by shelf/position. Camera: angle + distance. Lighting: direction + temperature.]
+
+CHARACTER DRIFT PREVENTION — IRON RULES:
+- The character's face, hair, skin tone, and build MUST be pixel-identical to clip 1. Never write age, weight, or appearance variations.
+- If Veo changes the character's face between clips, the I2V anchor frame (last frame of previous clip) is the correction — the text appearance block reinforces it. Both must match.
+- NEVER describe the character's emotion in the appearance block — only in the ACTION block.
+- NEVER write "she now looks", "he appears", "looking more" — these trigger temporal drift.
+- Lip color, eye makeup, earrings — if present in clip 1, state them verbatim in every clip's OUTFIT & APPEARANCE block.
 
 AUDIO-VISUAL SYNC:
 Add to every prompt: "Audio-visual sync: match lip movements precisely to spoken dialogue."
@@ -292,7 +299,7 @@ OUTPUT: valid JSON only:
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=system,
-            temperature=0.5,
+            temperature=0.2,  # Low temperature = stricter rule-following, less hallucination
         ),
     )
 
@@ -341,26 +348,34 @@ def build_continuing_from(
         f"(ordered earliest to latest, sampled from the final 2 seconds).\n\n"
         f"The NEXT clip that will be generated is: '{next_scene_summary}'\n\n"
         f"Write a precise CONTINUING FROM: description for the Veo prompt of the next clip.\n"
-        f"Describe EXACTLY what is visible in the final frame:\n"
-        f"- Character: exact position (standing/sitting/facing which direction), "
-        f"  expression (precise — e.g. 'mid-smile, eyes slightly wet'), "
-        f"  hand/body position, what they just finished saying or doing\n"
-        f"- BACKGROUND INVENTORY (most critical — be exhaustive, not vague): "
-        f"  List EVERY visible object behind the character one by one. "
-        f"  For shelves: count the items, state their exact color and position (left/center/right). "
-        f"  For walls: exact color and texture. "
-        f"  For counters/floors: material and color. "
-        f"  Do NOT write 'shelves with products' — write 'left shelf: two white tubes and one brown bottle, "
-        f"  center shelf: three white bottles, right shelf: two cream tubes'. "
-        f"  This inventory is what prevents the next clip from hallucinating new objects.\n"
-        f"- Camera: angle (eye-level/low/high), distance (close-up/medium/wide), "
-        f"  any movement that was happening (pan/tilt/static)\n"
-        f"- Lighting: quality (soft/harsh), direction (from left/right/behind), "
-        f"  color temperature (warm/cool/golden)\n"
-        f"- Audio state: was anyone speaking, what was the BGM doing\n"
-        f"- Emotional momentum: what feeling is in the air as this clip ends\n\n"
+        f"This description is the ONLY thing preventing visual drift — be exhaustive.\n\n"
+        f"MANDATORY sections to cover:\n\n"
+        f"1. CHARACTER STATE:\n"
+        f"   - Exact body position (standing/sitting, which direction facing)\n"
+        f"   - Expression: precise micro-expression (e.g. 'lips just closed after speaking, slight furrow in brow')\n"
+        f"   - Both hands: exact position and what they are holding/touching\n"
+        f"   - What the character just finished saying or doing\n\n"
+        f"2. BACKGROUND INVENTORY (most critical — Veo hallucinates new objects if this is vague):\n"
+        f"   Do NOT write 'shelves with products'. Write each object individually:\n"
+        f"   'Left shelf: [count] [color] [shape] items. Center shelf: [count] [color] [shape] items. Right shelf: ...'\n"
+        f"   Wall color and texture. Counter/floor material and color.\n"
+        f"   Any furniture edges, windows, or light fixtures visible.\n\n"
+        f"3. CAMERA:\n"
+        f"   - Exact angle (eye-level / slightly low / slightly high)\n"
+        f"   - Exact distance (extreme close-up / close-up / medium / medium-wide)\n"
+        f"   - Movement state (static — write 'camera absolutely still' if no movement)\n\n"
+        f"4. LIGHTING LOCK (copy this exactly into next clip's LIGHTING block):\n"
+        f"   - Direction: which side light comes from (left / right / front / overhead)\n"
+        f"   - Color temperature: warm golden / neutral white / cool blue\n"
+        f"   - Quality: soft diffused / harsh direct\n"
+        f"   - Any visible shadows and their direction\n\n"
+        f"5. AUDIO STATE:\n"
+        f"   - Speaking or silent\n"
+        f"   - BGM: describe the mood and tempo so it can be matched exactly\n\n"
+        f"6. EMOTIONAL MOMENTUM: one sentence — what feeling is in the air as this clip ends.\n\n"
         f"Format: start directly with 'CONTINUING FROM:' — no preamble.\n"
-        f"Keep it under 180 words. Be exhaustively specific about the background. Be factual, not poetic."
+        f"Maximum 200 words. Be exhaustively specific. Factual, not poetic.\n"
+        f"Every vague word ('some products', 'a few items', 'the room') is a drift risk — replace with exact specifics."
     )))
 
     response = gemini_client.models.generate_content(
@@ -448,11 +463,36 @@ def generate_clip_with_frame_context(
     if scripted_cf:
         merged_cf = (
             continuing_from
-            + "\n\nSCRIPTED INTENT (planned narrative — use alongside actual frame state above):\n"
+            + "\n\nSCRIPTED INTENT (planned narrative — reconcile with actual frame state above, "
+            + "do NOT contradict the vision-verified CONTINUING FROM):\n"
             + scripted_cf.replace("CONTINUING FROM:", "SCRIPTED CONTINUING FROM:", 1)
         )
     else:
         merged_cf = continuing_from
+
+    # ── Inject BACKGROUND FREEZE line into LOCATION block if missing ─────────
+    # Ensures the freeze line is always present even if Director Agent missed it
+    FREEZE_LINE = "पृष्ठभूमि पूरी तरह स्थिर और अपरिवर्तित रहती है — कोई नई वस्तु नहीं आएगी, कोई वस्तु गायब नहीं होगी, रंग नहीं बदलेगा।"
+    other_text = "\n".join(other_lines)
+    if FREEZE_LINE not in other_text:
+        # Find LOCATION block and append freeze line after it
+        location_injected = False
+        new_other_lines = []
+        for line in other_lines:
+            new_other_lines.append(line)
+            if line.strip().startswith("LOCATION:") and not location_injected:
+                new_other_lines.append(FREEZE_LINE)
+                location_injected = True
+        if not location_injected:
+            # No LOCATION block found — append before ACTION
+            final_lines = []
+            for line in new_other_lines:
+                if line.strip().startswith("ACTION:") and not location_injected:
+                    final_lines.append(f"LOCATION: {FREEZE_LINE}")
+                    location_injected = True
+                final_lines.append(line)
+            new_other_lines = final_lines
+        other_lines = new_other_lines
 
     updated_prompt = merged_cf + "\n\n" + "\n".join(other_lines).lstrip()
 
