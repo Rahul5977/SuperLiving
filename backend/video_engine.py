@@ -397,54 +397,189 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
         logger.error(f"❌ Unhandled concat fallback error:\n{e}")
         return False
         
-def _normalize_cta_video(ffmpeg_bin: str, cta_path: str, norm_path: str) -> bool:
-    """Normalize CTA video to ensure it matches the AI clips for concatenation."""
-    r = subprocess.run(
-        [ffmpeg_bin, "-y", "-i", cta_path,
-         "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=24",
-         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-         "-ac", "2", "-ar", "44100", "-c:a", "aac", "-b:a", "128k",
-         norm_path],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        logger.error(f"Failed to normalize CTA:\n{r.stderr}")
-        return False
-    return True
+def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: str,
+                               pause_sec: float = 0.5) -> bool:
+    """
+    Append *cta_path* after *base_vid_path* with an optional black-frame pause,
+    then write the result to *output_path*.
 
-def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: str) -> bool:
-    """Appends CTA to the end of a video."""
+    ROOT CAUSE OF THE STUCK-CTA BUG
+    ────────────────────────────────
+    The original code normalized the two files separately and then tried to
+    stream-copy them together with `concat demuxer -c copy`.  Stream-copy only
+    works when EVERY stream parameter is identical: codec, fps, timebase,
+    sample-rate, channel layout, and pixel format.  The CTA file is 60 fps /
+    48000 Hz; the AI stitched video is 24 fps / 44100 Hz.  After separate
+    normalization runs the container timebases can still differ by a fraction,
+    which makes the concat demuxer write a file where the CTA segment has
+    corrupted PTS — it appears to play but immediately stalls or shows a black
+    frame because the player cannot seek into the second segment.
+
+    THE FIX: filter_complex concat (always re-encode, single pass)
+    ──────────────────────────────────────────────────────────────
+    We feed BOTH inputs into a single ffmpeg invocation and join them via the
+    `concat` filter.  The filter resets PTS at every segment boundary and emits
+    one continuous timeline.  A full re-encode guarantees every frame has a
+    monotonically-increasing, player-friendly timestamp — no stalls, no seeking
+    bugs, no codec mismatch.
+
+    PAUSE
+    ─────
+    A `pause_sec` (default 0.5 s) black+silence segment is inserted between the
+    AI video and the CTA using `color` + `anullsrc` sources so the transition
+    feels intentional rather than jarring.
+    """
     ffmpeg_bin = _get_ffmpeg()
-    
-    norm_cta = os.path.join(TMP, "norm_cta.mp4")
-    if not _normalize_cta_video(ffmpeg_bin, cta_path, norm_cta):
-        return False
-    
-    norm_base = os.path.join(TMP, "norm_base.mp4")
-    r = subprocess.run(
-        [ffmpeg_bin, "-y", "-i", base_vid_path,
-         "-vf", "scale=1080:1920,format=yuv420p,fps=24",
-         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-         "-ac", "2", "-ar", "44100", "-c:a", "aac", "-b:a", "128k",
-         norm_base],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        logger.error(f"Failed to normalize base video for CTA concat:\n{r.stderr}")
+
+    # ── Shared encode parameters (must be identical for both segments) ────────
+    TARGET_W, TARGET_H = 1080, 1920
+    TARGET_FPS  = 24
+    TARGET_AR   = 44100   # audio sample rate
+    TARGET_ACH  = 2       # stereo
+
+    # ── Unique filenames so concurrent requests don't collide ─────────────────
+    uid = uuid.uuid4().hex[:8]
+    norm_base = os.path.join(TMP, f"norm_base_{uid}.mp4")
+    norm_cta  = os.path.join(TMP, f"norm_cta_{uid}.mp4")
+    pause_seg = os.path.join(TMP, f"pause_{uid}.mp4")
+
+    def _re_encode(src: str, dst: str, label: str) -> bool:
+        """
+        Re-encode *src* to a fully normalised MP4:
+          • 1080×1920 yuv420p @ 24 fps  (scale-with-pad preserves AR)
+          • AAC stereo @ 44100 Hz
+          • -movflags +faststart  so the moov atom is at the front —
+            this is what lets players seek into the segment without
+            downloading the entire file first.
+        """
+        cmd = [
+            ffmpeg_bin, "-y", "-i", src,
+            "-vf", (
+                f"scale={TARGET_W}:{TARGET_H}"
+                f":force_original_aspect_ratio=decrease,"
+                f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,"
+                f"format=yuv420p,fps={TARGET_FPS}"
+            ),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "192k",
+            # Force a clean timebase so concat filter has nothing to complain about
+            "-video_track_timescale", "12800",
+            "-movflags", "+faststart",
+            dst,
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            logger.error(f"❌ Re-encode failed ({label}):\n{r.stderr[-600:]}")
+            return False
+        sz = os.path.getsize(dst) // 1024
+        logger.info(f"  ✅ Normalised {label}: {sz} KB → {dst}")
+        return True
+
+    def _make_pause(dst: str) -> bool:
+        """Generate a black-frame + silence segment of *pause_sec* seconds."""
+        if pause_sec <= 0:
+            return True   # caller skips concatenating this segment
+        cmd = [
+            ffmpeg_bin, "-y",
+            "-f", "lavfi",
+            "-i", f"color=black:size={TARGET_W}x{TARGET_H}:rate={TARGET_FPS}:duration={pause_sec}",
+            "-f", "lavfi",
+            "-i", f"anullsrc=r={TARGET_AR}:cl=stereo:d={pause_sec}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "192k",
+            "-t", str(pause_sec),
+            "-video_track_timescale", "12800",
+            "-movflags", "+faststart",
+            dst,
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            logger.error(f"❌ Pause segment creation failed:\n{r.stderr[-400:]}")
+            return False
+        logger.info(f"  ✅ Pause segment ({pause_sec}s) created")
+        return True
+
+    # ── Step 1: normalise both inputs ─────────────────────────────────────────
+    logger.info("  🔧 Normalising AI video for CTA concat…")
+    if not _re_encode(base_vid_path, norm_base, "AI video"):
         return False
 
-    concat_file = os.path.join(TMP, "concat_cta.txt")
-    with open(concat_file, "w") as f:
-        f.write(f"file '{norm_base}'\n")
-        f.write(f"file '{norm_cta}'\n")
-
-    r = subprocess.run(
-        [ffmpeg_bin, "-y", "-f", "concat", "-safe", "0", "-i", concat_file,
-         "-c", "copy", output_path],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        logger.error(f"Failed to concat CTA:\n{r.stderr}")
+    logger.info("  🔧 Normalising CTA video…")
+    if not _re_encode(cta_path, norm_cta, "CTA"):
         return False
-     
+
+    # ── Step 2: create pause segment (may be skipped if pause_sec=0) ─────────
+    use_pause = pause_sec > 0
+    if use_pause:
+        logger.info(f"  🔧 Creating {pause_sec}s black pause segment…")
+        if not _make_pause(pause_seg):
+            use_pause = False   # non-fatal — skip pause, still concat
+
+    # ── Step 3: join via filter_complex concat (single re-encode pass) ────────
+    #
+    # WHY filter_complex and not concat demuxer?
+    # The concat demuxer with -c copy is the fast path but requires IDENTICAL
+    # codec / timebase metadata.  Even after separate re-encodes there can be
+    # sub-frame timebase differences that corrupt PTS in the second segment.
+    # The concat filter recalculates PTS from scratch for every segment — it is
+    # the only way to guarantee a single, monotonic timeline.
+    #
+    segments = [norm_base]
+    if use_pause:
+        segments.append(pause_seg)
+    segments.append(norm_cta)
+
+    n = len(segments)
+    cmd = [ffmpeg_bin, "-y"]
+    for seg in segments:
+        cmd += ["-i", seg]
+
+    # Build "[0:v][0:a][1:v][1:a]...[n-1:v][n-1:a]concat=n=N:v=1:a=1[vout][aout]"
+    stream_pairs = "".join(f"[{i}:v][{i}:a]" for i in range(n))
+    filter_str   = f"{stream_pairs}concat=n={n}:v=1:a=1[vout][aout]"
+
+    cmd += [
+        "-filter_complex", filter_str,
+        "-map", "[vout]",
+        "-map", "[aout]",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "192k",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+
+    logger.info(f"  🎬 Joining {n} segment(s) via filter_complex concat…")
+    r = subprocess.run(cmd, capture_output=True, text=True)
+
+    if r.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) < 50_000:
+        logger.error(f"❌ filter_complex concat failed:\n{r.stderr[-800:]}")
+        # ── Fallback: concat demuxer with full re-encode (no stream copy) ──
+        logger.info("  ↩️ Falling back to concat demuxer + re-encode…")
+        list_file = os.path.join(TMP, f"concat_cta_{uid}.txt")
+        with open(list_file, "w") as fh:
+            for seg in segments:
+                safe = os.path.abspath(seg).replace("\\", "/")
+                fh.write(f"file '{safe}'\n")
+
+        r2 = subprocess.run(
+            [ffmpeg_bin, "-y", "-f", "concat", "-safe", "0", "-i", list_file,
+             "-vf", f"fps={TARGET_FPS},format=yuv420p",
+             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+             "-pix_fmt", "yuv420p",
+             "-af", f"aresample={TARGET_AR}",
+             "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "192k",
+             "-movflags", "+faststart",
+             output_path],
+            capture_output=True, text=True,
+        )
+        if r2.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) < 50_000:
+            logger.error(f"❌ Fallback concat also failed:\n{r2.stderr[-400:]}")
+            return False
+        logger.info("  ✅ Fallback concat succeeded")
+
+    sz = os.path.getsize(output_path) // (1024 * 1024)
+    logger.info(f"  ✅ Final video with CTA ready: {output_path} ({sz} MB)")
     return True
