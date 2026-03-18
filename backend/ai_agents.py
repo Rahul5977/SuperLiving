@@ -142,7 +142,15 @@ Diffusion models 'melt' if overloaded. You MUST follow these isolation rules:
 - ACTION ISOLATION: Never overload an 8-second clip. If a character changes emotion (e.g., sad to happy), their body MUST remain absolutely still (write: "शरीर बिल्कुल स्थिर रहता है, हाथ नीचे ही रहेंगे").
 - If a character does a physical action (dropping products, lifting phone), their emotion must already be established.
 - CAMERA LOCK: Whenever a character moves their hands or body, you MUST use "(STATIC SHOT) / कैमरा बिल्कुल स्थिर रहता है". Do NOT zoom or pan while a character is moving.
-- LOCATION LOCK: Create a highly specific 'LOCKED BACKGROUND' description (e.g., specific shelf layout, blurred background) and copy it VERBATIM into the LOCATION block of every single clip so the room never changes shape. Use hard cuts for scene changes.
+- LOCATION LOCK — BACKGROUND FREEZE (MOST CRITICAL ANTI-HALLUCINATION RULE):
+  STEP 1 — Before writing any clip, write one LOCKED BACKGROUND sentence of at least 50 words.
+  Describe like a set decorator's bible: exact wall color/texture, every visible shelf item (position: left/center/right, color, shape, count), floor/counter material, light source direction and color temperature, any furniture edges visible.
+  EXAMPLE OF CORRECT LOCKED BACKGROUND:
+  "LOCKED BACKGROUND: मैट ग्रे दीवार, पीछे तीन सफ़ेद शेल्फ — बाईं शेल्फ पर दो सफ़ेद ट्यूब और एक भूरी बोतल, बीच की शेल्फ पर तीन सफ़ेद बोतल, दाईं शेल्फ पर दो क्रीम रंग की ट्यूब — नीचे सफ़ेद मार्बल काउंटर, बाईं तरफ से नरम सफ़ेद रोशनी, दाईं दीवार सादी ग्रे।"
+  STEP 2 — Copy this EXACT sentence VERBATIM into the LOCATION block of EVERY SINGLE clip. Not paraphrased. Not shortened. Word for word.
+  STEP 3 — End every clip's LOCATION block with this mandatory freeze line (copy verbatim):
+  "पृष्ठभूमि पूरी तरह स्थिर और अपरिवर्तित रहती है — कोई नई वस्तु नहीं आएगी, कोई वस्तु गायब नहीं होगी, रंग नहीं बदलेगा।"
+  VIOLATION: If any clip has a different LOCATION description than clip 1, that is a fatal error.
 
 UI & HALLUCINATION GUARDRAILS:
 - THE PHONE SCREEN TRAP: Veo cannot render a second human face inside a phone screen. If a phone is shown, you MUST state: "फोन की स्क्रीन काली है" (The phone screen is black). NEVER describe an app UI or a video call.
@@ -157,7 +165,8 @@ DIALOGUE LENGTH — THE LIP-SYNC 'GOLDILOCKS ZONE':
 
 CONTINUITY RULES:
 - Every prompt except clip 1 MUST begin with a CONTINUING FROM: block describing the exact last frame of the previous clip.
-- End every prompt with: "LAST FRAME: [exact position, expression, camera, framing]"
+- The CONTINUING FROM block MUST include a full background inventory: list every object visible behind the character (shelf items by position, wall color, counter surface, light direction). This prevents Veo from hallucinating new background objects.
+- End every prompt with: "LAST FRAME: [exact position, expression, camera, framing, AND full background object list]"
 
 AUDIO-VISUAL SYNC:
 Add to every prompt: "Audio-visual sync: match lip movements precisely to spoken dialogue."

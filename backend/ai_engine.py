@@ -215,7 +215,15 @@ Diffusion models 'melt' if overloaded. You MUST follow these isolation rules:
 - ACTION ISOLATION: Never overload an 8-second clip. If a character changes emotion (e.g., sad to happy), their body MUST remain absolutely still (write: "शरीर बिल्कुल स्थिर रहता है, हाथ नीचे ही रहेंगे"). 
 - If a character does a physical action (dropping products, lifting phone), their emotion must already be established.
 - CAMERA LOCK: Whenever a character moves their hands or body, you MUST use "(STATIC SHOT) / कैमरा बिल्कुल स्थिर रहता है". Do NOT zoom or pan while a character is moving.
-- LOCATION LOCK: Never instruct the camera to pan or transition between rooms (e.g., bathroom to living room). Keep the location locked. Use hard cuts for scene changes.
+- LOCATION LOCK — BACKGROUND FREEZE (MOST CRITICAL ANTI-HALLUCINATION RULE):
+  STEP 1 — Before writing any clip, write one LOCKED BACKGROUND sentence of at least 50 words.
+  Describe like a set decorator's bible: exact wall color/texture, every visible shelf item (position: left/center/right, color, shape, count), floor/counter material, light source direction and color temperature, any furniture edges visible.
+  EXAMPLE OF CORRECT LOCKED BACKGROUND:
+  "LOCKED BACKGROUND: मैट ग्रे दीवार, पीछे तीन सफ़ेद शेल्फ — बाईं शेल्फ पर दो सफ़ेद ट्यूब और एक भूरी बोतल, बीच की शेल्फ पर तीन सफ़ेद बोतल, दाईं शेल्फ पर दो क्रीम रंग की ट्यूब — नीचे सफ़ेद मार्बल काउंटर, बाईं तरफ से नरम सफ़ेद रोशनी, दाईं दीवार सादी ग्रे।"
+  STEP 2 — Copy this EXACT sentence VERBATIM into the LOCATION block of EVERY SINGLE clip. Not paraphrased. Not shortened. Word for word.
+  STEP 3 — End every clip's LOCATION block with this mandatory freeze line (copy verbatim):
+  "पृष्ठभूमि पूरी तरह स्थिर और अपरिवर्तित रहती है — कोई नई वस्तु नहीं आएगी, कोई वस्तु गायब नहीं होगी, रंग नहीं बदलेगा।"
+  VIOLATION: If any clip has a different LOCATION description than clip 1, that is a fatal error.
 
 UI & HALLUCINATION GUARDRAILS:
 - THE PHONE SCREEN TRAP: Veo cannot render a second human face inside a phone screen. If a phone is shown, you MUST state: "फोन की स्क्रीन काली है" (The phone screen is black). NEVER describe an app UI or a video call.
@@ -230,7 +238,8 @@ DIALOGUE LENGTH — THE LIP-SYNC 'GOLDILOCKS ZONE':
 
 CONTINUITY RULES:
 - Every prompt except clip 1 MUST begin with a CONTINUING FROM: block describing the exact last frame of the previous clip.
-- End every prompt with: "LAST FRAME: [exact position, expression, camera, framing]"
+- The CONTINUING FROM block MUST include a full background inventory: list every object visible behind the character (shelf items by position, wall color, counter surface, light direction). This prevents Veo from hallucinating new background objects.
+- End every prompt with: "LAST FRAME: [exact position, expression, camera, framing, AND full background object list]"
 
 CLIP PROMPT STRUCTURE:
 1. CONTINUING FROM: [For clips 2+]
@@ -336,7 +345,14 @@ def build_continuing_from(
         f"- Character: exact position (standing/sitting/facing which direction), "
         f"  expression (precise — e.g. 'mid-smile, eyes slightly wet'), "
         f"  hand/body position, what they just finished saying or doing\n"
-        f"- Room: exact location, which objects are visible and where\n"
+        f"- BACKGROUND INVENTORY (most critical — be exhaustive, not vague): "
+        f"  List EVERY visible object behind the character one by one. "
+        f"  For shelves: count the items, state their exact color and position (left/center/right). "
+        f"  For walls: exact color and texture. "
+        f"  For counters/floors: material and color. "
+        f"  Do NOT write 'shelves with products' — write 'left shelf: two white tubes and one brown bottle, "
+        f"  center shelf: three white bottles, right shelf: two cream tubes'. "
+        f"  This inventory is what prevents the next clip from hallucinating new objects.\n"
         f"- Camera: angle (eye-level/low/high), distance (close-up/medium/wide), "
         f"  any movement that was happening (pan/tilt/static)\n"
         f"- Lighting: quality (soft/harsh), direction (from left/right/behind), "
@@ -344,7 +360,7 @@ def build_continuing_from(
         f"- Audio state: was anyone speaking, what was the BGM doing\n"
         f"- Emotional momentum: what feeling is in the air as this clip ends\n\n"
         f"Format: start directly with 'CONTINUING FROM:' — no preamble.\n"
-        f"Keep it under 120 words. Be factual and specific, not poetic."
+        f"Keep it under 180 words. Be exhaustively specific about the background. Be factual, not poetic."
     )))
 
     response = gemini_client.models.generate_content(
