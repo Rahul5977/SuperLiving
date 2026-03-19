@@ -99,6 +99,38 @@ def _sanitize_filename(filename: str) -> str:
     return re.sub(r"[^\w.\-]", "_", os.path.basename(filename))
 
 
+
+def _normalize_clip(raw: dict) -> dict:
+    """
+    Gemini occasionally returns the `prompt` (or other string fields) as a
+    structured dict instead of a flat string, e.g.:
+        {"OUTFIT & APPEARANCE": "...", "ACTION": "...", ...}
+
+    Flatten any non-string values into KEY:\nVALUE blocks before the data
+    reaches Pydantic, preventing ValidationError on every clip.
+    Applied to all clips returned by build_clip_prompts / build_director_prompts.
+    """
+    import json as _json
+
+    def _to_str(v) -> str:
+        if isinstance(v, str):
+            return v
+        if isinstance(v, dict):
+            return "\n\n".join(
+                f"{k}:\n{val}" if val else str(k) for k, val in v.items()
+            )
+        if v is None:
+            return ""
+        return _json.dumps(v, ensure_ascii=False)
+
+    return {
+        "clip":          raw.get("clip", 0),
+        "scene_summary": _to_str(raw.get("scene_summary", "")),
+        "last_frame":    _to_str(raw.get("last_frame", "")),
+        "prompt":        _to_str(raw.get("prompt", "")),
+    }
+
+
 # ── Rate limiting (simple in-memory, replace with Redis for multi-instance) ─
 _rate_limit: dict[str, list[float]] = {}
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "30"))
@@ -436,7 +468,7 @@ async def agentic_pipeline(request: AgenticPipelineRequest):
 
     return AgenticPipelineResponse(
         characters=character_profiles,
-        clips=[ClipPrompt(**c) for c in clips],
+        clips=[ClipPrompt(**_normalize_clip(c)) for c in clips],
         message=f"Pipeline complete — {len(character_profiles)} character(s), {len(clips)} clip(s).",
     )
 
@@ -507,7 +539,7 @@ async def generate_prompts(request: GeneratePromptsRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prompt generation failed: {e}")
 
-    return GeneratePromptsResponse(clips=[ClipPrompt(**c) for c in clips], character_sheet=character_sheet)
+    return GeneratePromptsResponse(clips=[ClipPrompt(**_normalize_clip(c)) for c in clips], character_sheet=character_sheet)
 
 
 @app.post("/api/regenerate-clips", response_model=dict)

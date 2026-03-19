@@ -1,7 +1,8 @@
 """Pydantic models for request/response validation."""
 
+import json
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── Shared / Sub-models ──────────────────────────────────────────────────────
@@ -16,6 +17,35 @@ class ClipPrompt(BaseModel):
     scene_summary: str
     last_frame: str = ""
     prompt: str
+
+    @field_validator("prompt", mode="before")
+    @classmethod
+    def coerce_prompt_to_str(cls, v: Any) -> str:
+        """
+        Gemini occasionally returns the prompt field as a structured dict
+        (e.g. {'OUTFIT & APPEARANCE': '...', 'ACTION': '...'}) instead of a
+        flat string.  Flatten it so Pydantic validation never fails.
+        """
+        if isinstance(v, str):
+            return v
+        if isinstance(v, dict):
+            # Join each section as "KEY:\nVALUE" blocks
+            parts = []
+            for key, val in v.items():
+                parts.append(f"{key}:\n{val}" if val else str(key))
+            return "\n\n".join(parts)
+        # Fallback for any other unexpected type
+        return json.dumps(v, ensure_ascii=False)
+
+    @field_validator("scene_summary", "last_frame", mode="before")
+    @classmethod
+    def coerce_str_fields(cls, v: Any) -> str:
+        """Guard the other string fields against the same dict-return issue."""
+        if isinstance(v, str):
+            return v
+        if v is None:
+            return ""
+        return str(v)
 
 
 # ── POST /api/analyze-characters ─────────────────────────────────────────────
