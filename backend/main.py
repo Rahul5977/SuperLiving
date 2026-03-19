@@ -1,22 +1,31 @@
 """
-AI logic -> ai_engine.py
-FFmpeg logic -> video_engine.py.
+SuperLiving Ad Generator API
+AI logic -> ai_engine.py | FFmpeg logic -> video_engine.py
+Production-ready: AWS deployment, parallel workers, security hardening
 """
 
+import asyncio
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import HTTPBearer
 from google import genai
 from google.genai import types
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .ai_agents import (
     auto_generate_character_image,
@@ -34,7 +43,6 @@ from .ai_engine import (
     generate_clip_from_image,
     generate_clip_text_only,
     generate_clip_with_frame_context,
-    get_clip_character_photo,
     rephrase_blocked_prompt,
     sanitize_prompt_for_veo,
 )
@@ -49,17 +57,34 @@ from .api_models import (
     GeneratePromptsResponse,
     GenerateVideoRequest,
     GenerateVideoResponse,
+    JobStatusResponse,
     RegenerateClipsRequest,
     RegenerateClipsResponse,
 )
-from .video_engine import stitch_clips, concat_with_normalized_cta
+from .video_engine import concat_with_normalized_cta, stitch_clips
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
+# ── Logging ────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 TMP = tempfile.gettempdir()
+MAX_RETRIES = 3
+
+# ── Parallel job state ─────────────────────────────────────────────────────
+# Stores {job_id: {"status": str, "progress": int, "result": dict|None, "error": str|None}}
+_jobs: dict[str, dict] = {}
+# Thread pool for background video generation (up to 4 parallel workers)
+_executor = ThreadPoolExecutor(max_workers=4)
+
+
+# ── Security: allowed file types for uploads ───────────────────────────────
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_UPLOAD_SIZE_MB = 10
 
 
 def _unique_video_path(tag: str) -> str:
@@ -69,22 +94,83 @@ def _unique_video_path(tag: str) -> str:
     )
 
 
+def _sanitize_filename(filename: str) -> str:
+    """Strip path traversal and dangerous chars from uploaded filenames."""
+    return re.sub(r"[^\w.\-]", "_", os.path.basename(filename))
+
+
+# ── Rate limiting (simple in-memory, replace with Redis for multi-instance) ─
+_rate_limit: dict[str, list[float]] = {}
+RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "30"))
+RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Skip rate limiting for health checks
+        if request.url.path == "/api/health":
+            return await call_next(request)
+
+        client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+        now = time.time()
+        window_start = now - RATE_LIMIT_WINDOW
+
+        if client_ip not in _rate_limit:
+            _rate_limit[client_ip] = []
+
+        # Purge old entries
+        _rate_limit[client_ip] = [t for t in _rate_limit[client_ip] if t > window_start]
+
+        if len(_rate_limit[client_ip]) >= RATE_LIMIT_REQUESTS:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests. Please slow down."},
+            )
+
+        _rate_limit[client_ip].append(now)
+        return await call_next(request)
+
+
+# ── App lifecycle ──────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("🚀 SuperLiving API starting up")
+    yield
+    logger.info("🛑 SuperLiving API shutting down — cleaning up thread pool")
+    _executor.shutdown(wait=False)
+
+
 app = FastAPI(
     title="SuperLiving Ad Generator API",
-    version="1.0.0",
-    description="AI-powered video ad generation using Gemini + Veo",
+    version="2.0.0",
+    description="AI-powered video ad generation — production build",
+    lifespan=lifespan,
+    # Disable docs in production for security
+    docs_url=None if os.getenv("ENVIRONMENT") == "production" else "/docs",
+    redoc_url=None if os.getenv("ENVIRONMENT") == "production" else "/redoc",
 )
+
+# ── CORS ───────────────────────────────────────────────────────────────────
+_allowed_origins_raw = os.getenv("FRONTEND_URL", "http://localhost:3000")
+_allowed_origins = [o.strip() for o in _allowed_origins_raw.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(RateLimitMiddleware)
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
 def _get_api_key() -> str:
-    key = os.getenv("GOOGLE_API_KEY", "")
+    key = os.getenv("GOOGLE_API_KEY", "").strip()
     if not key:
         raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured on server.")
     return key
@@ -97,35 +183,232 @@ def _get_clients() -> tuple:
     return gemini_client, video_client
 
 
+def _update_job(job_id: str, **kwargs):
+    if job_id in _jobs:
+        _jobs[job_id].update(kwargs)
+
+
+# ── Core video generation logic (runs in thread pool) ─────────────────────
+
+def _run_generate_video_job(
+    job_id: str,
+    clips: list,
+    veo_model: str,
+    aspect_ratio: str,
+    num_clips: int,
+    characters: list = None,
+):
+    """
+    Blocking video generation — executed in a background thread.
+    Updates _jobs[job_id] throughout.
+    """
+    try:
+        gemini_client, video_client = _get_clients()
+        api_key = _get_api_key()
+
+        clip_paths: list[str] = []
+        total = len(clips)
+
+        anchor_image_b64 = ""
+        if characters:
+            for char in characters:
+                if getattr(char, "reference_image_base64", ""):
+                    anchor_image_b64 = char.reference_image_base64
+                    break
+
+        for i, clip in enumerate(clips):
+            _update_job(
+                job_id,
+                status="generating",
+                step=f"Generating clip {i + 1}/{total}: {clip.scene_summary}",
+                progress=int((i / total) * 80),
+            )
+
+            current_prompt = clip.prompt
+            operation = None
+
+            # Pre-sanitize
+            try:
+                sanitized = sanitize_prompt_for_veo(gemini_client, current_prompt, clip.clip)
+                if sanitized and len(sanitized) > 100:
+                    current_prompt = sanitized
+            except Exception as san_err:
+                logger.warning(f"Sanitizer failed ({san_err}) — using original prompt")
+
+            for attempt in range(1, MAX_RETRIES + 1):
+                if attempt > 1:
+                    current_prompt = rephrase_blocked_prompt(gemini_client, current_prompt, attempt)
+
+                try:
+                    if i == 0:
+                        if anchor_image_b64:
+                            operation = generate_clip_from_image(
+                                video_client, veo_model, current_prompt,
+                                aspect_ratio, clip.clip, num_clips, anchor_image_b64,
+                            )
+                        else:
+                            operation = generate_clip_text_only(
+                                video_client, veo_model, current_prompt,
+                                aspect_ratio, clip.clip, num_clips,
+                            )
+                    else:
+                        prev_path = clip_paths[i - 1]
+                        next_summary = clips[i].scene_summary if i < len(clips) else ""
+                        operation, current_prompt = generate_clip_with_frame_context(
+                            video_client, gemini_client, veo_model, current_prompt,
+                            aspect_ratio, clip.clip, num_clips, prev_path, next_summary,
+                        )
+                except Exception as gen_err:
+                    err_str = str(gen_err)
+                    RETRYABLE = ("503", "Deadline", "Broken pipe", "Errno 32",
+                                 "ConnectionReset", "RemoteDisconnected", "Connection reset",
+                                 "timed out", "timeout")
+                    if any(e in err_str for e in RETRYABLE) and attempt < MAX_RETRIES:
+                        wait = 15 * attempt
+                        logger.warning(f"Clip {clip.clip} transient error (attempt {attempt}) — retry in {wait}s")
+                        time.sleep(wait)
+                        continue
+                    logger.warning(f"Clip {clip.clip} failed (attempt {attempt}) — text-only fallback")
+                    operation = generate_clip_text_only(
+                        video_client, veo_model, current_prompt,
+                        aspect_ratio, clip.clip, num_clips,
+                    )
+
+                if operation is None:
+                    if attempt < MAX_RETRIES:
+                        continue
+                    raise RuntimeError(f"Clip {clip.clip} timed out after {MAX_RETRIES} attempts.")
+
+                try:
+                    video_obj = extract_generated_video(operation, clip.clip)
+                except RaiCelebrityError:
+                    operation = generate_clip_text_only(
+                        video_client, veo_model, current_prompt,
+                        aspect_ratio, clip.clip, num_clips,
+                    )
+                    video_obj = extract_generated_video(operation, clip.clip) if operation else None
+                except RaiContentError:
+                    video_obj = None
+
+                if video_obj is not None:
+                    break
+                if attempt == MAX_RETRIES:
+                    raise RuntimeError(f"Clip {clip.clip} failed after {MAX_RETRIES} attempts.")
+
+            # Save clip
+            clip_path = _unique_video_path(f"clip_{i + 1:02d}")
+            video_bytes = download_video(video_obj.uri, api_key)
+            with open(clip_path, "wb") as f:
+                f.write(video_bytes)
+            clip_paths.append(clip_path)
+            logger.info(f"✅ Clip {clip.clip} saved ({len(video_bytes) // 1024} KB)")
+
+        # Stitch
+        _update_job(job_id, status="stitching", step="Stitching clips together…", progress=85)
+        final_path = _unique_video_path("final")
+        if len(clip_paths) > 1:
+            ok = stitch_clips(clip_paths, final_path)
+            if not ok:
+                final_path = clip_paths[0]
+        else:
+            final_path = clip_paths[0]
+
+        # Append CTA
+        _update_job(job_id, step="Appending CTA…", progress=93)
+        cta_appended_path = _unique_video_path("final_with_cta")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(base_dir)
+        cta_video_path = os.path.join(project_root, "assets", "cta.mp4")
+
+        if os.path.exists(cta_video_path):
+            cta_success = concat_with_normalized_cta(final_path, cta_video_path, cta_appended_path)
+            if cta_success:
+                final_path = cta_appended_path
+
+        _update_job(
+            job_id,
+            status="done",
+            step="Complete!",
+            progress=100,
+            result={
+                "video_url": f"/api/video/{os.path.basename(final_path)}",
+                "clip_paths": clip_paths,
+                "message": f"Successfully generated {num_clips} clip(s).",
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Job {job_id} failed: {e}", exc_info=True)
+        _update_job(job_id, status="error", step="Failed", error=str(e))
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────
+
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "environment": os.getenv("ENVIRONMENT", "development"),
+        "active_jobs": sum(1 for j in _jobs.values() if j["status"] in ("pending", "generating", "stitching")),
+    }
 
 
-# agentic pipeline endpoint orchestrates the entire Phase 1-3 flow for maximum automation, returning all data needed for Phase 4 human review. This is the main "magic" endpoint that ties everything together.
+@app.post("/api/generate-video", response_model=dict)
+async def generate_video(request: GenerateVideoRequest):
+    """
+    Enqueues a video generation job and returns a job_id immediately.
+    Poll /api/jobs/{job_id} for status.
+    Supports up to 4 parallel jobs via thread pool.
+    """
+    job_id = uuid.uuid4().hex
+
+    arMap = {
+        "9:16 (Reels / Shorts)": "9:16",
+        "16:9 (YouTube / Landscape)": "16:9",
+    }
+    ar = arMap.get(request.aspect_ratio, request.aspect_ratio)
+
+    _jobs[job_id] = {
+        "status": "pending",
+        "step": "Queued…",
+        "progress": 0,
+        "result": None,
+        "error": None,
+    }
+
+    _executor.submit(
+        _run_generate_video_job,
+        job_id,
+        request.clips,
+        request.veo_model,
+        ar,
+        request.num_clips,
+        getattr(request, "characters", None),
+    )
+
+    return {"job_id": job_id, "message": "Job queued. Poll /api/jobs/{job_id} for status."}
+
+
+@app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(job_id: str):
+    """Poll this endpoint to track async video generation progress."""
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return JobStatusResponse(job_id=job_id, **_jobs[job_id])
+
 
 @app.post("/api/agentic-pipeline", response_model=AgenticPipelineResponse)
 async def agentic_pipeline(request: AgenticPipelineRequest):
-    """
-    Orchestrates Phases 1-3 of the SuperLiving Auto-Director pipeline:
-      Phase 1 — Parser Agent: Gemini extracts characters from the script.
-      Phase 2 — Imagen Agent: generates 9:16 reference faces for each character.
-      Phase 3 — Director Agent: Gemini splits the script into Veo 3.1 clip prompts.
-
-    Returns characters (with reference images) + clip prompts for Phase 4 (Human Review).
-    """
     gemini_client, _ = _get_clients()
     api_key = _get_api_key()
 
-    # Phase 1: Parse characters from script
-    logger.info("🎬 Phase 1 — Parsing characters from script…")
+    logger.info("🎬 Phase 1 — Parsing characters…")
     try:
         characters_json = parse_script_for_characters(gemini_client, request.script)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Phase 1 (Parser Agent) failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Phase 1 failed: {e}")
 
-    # Phase 2: Generate reference images for each character
-    logger.info("🖼️ Phase 2 — Generating reference images via Imagen…")
+    logger.info("🖼️ Phase 2 — Generating reference images…")
     character_profiles: list[CharacterProfile] = []
     for char in characters_json.get("characters", []):
         ref_image_b64 = ""
@@ -136,8 +419,7 @@ async def agentic_pipeline(request: AgenticPipelineRequest):
                 char.get("outfit", ""),
             )
         except Exception as e:
-            logger.warning(f"⚠️ Imagen failed for {char.get('name', '?')}: {e}")
-
+            logger.warning(f"Imagen failed for {char.get('name', '?')}: {e}")
         character_profiles.append(CharacterProfile(
             id=char.get("id", ""),
             name=char.get("name", ""),
@@ -146,22 +428,16 @@ async def agentic_pipeline(request: AgenticPipelineRequest):
             reference_image_base64=ref_image_b64,
         ))
 
-    # Phase 3: Build director prompts 
     logger.info("🎥 Phase 3 — Building director prompts…")
     try:
-        clips = build_director_prompts(
-            gemini_client, request.script, characters_json, request.num_clips,
-        )
+        clips = build_director_prompts(gemini_client, request.script, characters_json, request.num_clips)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Phase 3 (Director Agent) failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Phase 3 failed: {e}")
 
     return AgenticPipelineResponse(
         characters=character_profiles,
         clips=[ClipPrompt(**c) for c in clips],
-        message=(
-            f"Pipeline complete — {len(character_profiles)} character(s) extracted, "
-            f"{len(clips)} clip prompt(s) generated. Ready for Phase 4 (Human Review)."
-        ),
+        message=f"Pipeline complete — {len(character_profiles)} character(s), {len(clips)} clip(s).",
     )
 
 
@@ -170,15 +446,13 @@ async def analyze_characters(
     names: list[str] = Form(...),
     photos: list[UploadFile] = File(...),
 ):
-    """
-    Accepts uploaded images + character names.
-    Runs analyze_character_photo for each, returns locked JSON appearance/outfit.
-    """
     if len(names) != len(photos):
-        raise HTTPException(
-            status_code=400,
-            detail="Number of names must match number of photos.",
-        )
+        raise HTTPException(status_code=400, detail="Names and photos count must match.")
+
+    # Validate uploads
+    for photo in photos:
+        if photo.content_type not in ALLOWED_IMAGE_TYPES:
+            raise HTTPException(status_code=400, detail=f"File type {photo.content_type} not allowed.")
 
     gemini_client, _ = _get_clients()
     analyses: dict[str, CharacterAnalysis] = {}
@@ -188,6 +462,8 @@ async def analyze_characters(
         if not name:
             continue
         photo_bytes = await photo.read()
+        if len(photo_bytes) > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+            raise HTTPException(status_code=413, detail=f"Photo for {name} exceeds {MAX_UPLOAD_SIZE_MB}MB limit.")
         mime_type = photo.content_type or "image/jpeg"
         try:
             result = analyze_character_photo(gemini_client, name, photo_bytes, mime_type)
@@ -201,13 +477,8 @@ async def analyze_characters(
 
 @app.post("/api/generate-prompts", response_model=GeneratePromptsResponse)
 async def generate_prompts(request: GeneratePromptsRequest):
-    """
-    Accepts the script, character data, and settings.
-    Runs build_clip_prompts and returns the array of prompts for user review.
-    """
     gemini_client, _ = _get_clients()
 
-    # Build character sheet if no photos provided
     character_sheet = request.character_sheet
     if not request.has_photos and not character_sheet:
         try:
@@ -215,7 +486,6 @@ async def generate_prompts(request: GeneratePromptsRequest):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Character sheet generation failed: {e}")
 
-    # Convert photo_analyses from Pydantic to plain dict
     photo_analyses_dict = {
         name: {"appearance": data.appearance, "outfit": data.outfit}
         for name, data in request.photo_analyses.items()
@@ -226,7 +496,7 @@ async def generate_prompts(request: GeneratePromptsRequest):
             client=gemini_client,
             script=request.script,
             extra_prompt=request.extra_prompt,
-            extra_image_parts=[],  # Reference images handled via separate upload
+            extra_image_parts=[],
             character_sheet=character_sheet,
             photo_analyses=photo_analyses_dict,
             aspect_ratio=request.aspect_ratio,
@@ -237,354 +507,158 @@ async def generate_prompts(request: GeneratePromptsRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prompt generation failed: {e}")
 
-    return GeneratePromptsResponse(
-        clips=[ClipPrompt(**c) for c in clips],
-        character_sheet=character_sheet,
-    )
+    return GeneratePromptsResponse(clips=[ClipPrompt(**c) for c in clips], character_sheet=character_sheet)
 
 
-@app.post("/api/generate-video", response_model=GenerateVideoResponse)
-async def generate_video(request: GenerateVideoRequest):
-    """
-    Accepts user-reviewed prompts.
-    Runs the Veo generation loop (including last-frame I2V extraction)
-    and the stitch_clips function. Returns the final MP4 file URL.
-    """
-    gemini_client, video_client = _get_clients()
-    api_key = _get_api_key()
-
-    clip_paths: list[str] = []
-    MAX_RETRIES = 3
-
-    # ── Resolve anchor image for Clip 1 (first character's reference photo) ──
-    anchor_image_b64: str = ""
-    if hasattr(request, "characters") and request.characters:
-        for char in request.characters:
-            if getattr(char, "reference_image_base64", ""):
-                anchor_image_b64 = char.reference_image_base64
-                logger.info(f"🖼️ Clip 1 anchor image found for '{char.name}'")
-                break
-
-    try:
-        for i, clip in enumerate(request.clips):
-            logger.info(f"🎥 Clip {clip.clip}/{request.num_clips}: {clip.scene_summary}")
-            current_prompt = clip.prompt
-            operation = None
-
-            # ── Pre-sanitize before first attempt ─────────────────────────
-            try:
-                sanitized = sanitize_prompt_for_veo(
-                    gemini_client, current_prompt, clip.clip
-                )
-                if sanitized and len(sanitized) > 100:
-                    current_prompt = sanitized
-            except Exception as san_err:
-                logger.warning(f"⚠️ Sanitizer failed ({san_err}) — using original prompt")
-
-            for attempt in range(1, MAX_RETRIES + 1):
-                if attempt > 1:
-                    current_prompt = rephrase_blocked_prompt(
-                        gemini_client, current_prompt, attempt
-                    )
-
-                try:
-                    if i == 0:
-                        # BUG 2 FIX — Clip 1: use anchor reference image if available,
-                        # otherwise fall back to text-only.
-                        if anchor_image_b64:
-                            logger.info("🖼️ Clip 1: generating from anchor reference image (I2V)")
-                            operation = generate_clip_from_image(
-                                video_client, request.veo_model, current_prompt,
-                                request.aspect_ratio, clip.clip, request.num_clips,
-                                anchor_image_b64,
-                            )
-                        else:
-                            logger.info("📝 Clip 1: no anchor image — using text-only generation")
-                            operation = generate_clip_text_only(
-                                video_client, request.veo_model, current_prompt,
-                                request.aspect_ratio, clip.clip, request.num_clips,
-                            )
-                    else:
-                        # Clips 2+: last-frame I2V
-                        prev_path = clip_paths[i - 1]
-                        next_summary = request.clips[i].scene_summary if i < len(request.clips) else ""
-                        operation, current_prompt = generate_clip_with_frame_context(
-                            video_client, gemini_client,
-                            request.veo_model, current_prompt, request.aspect_ratio,
-                            clip.clip, request.num_clips,
-                            prev_path, next_summary,
-                        )
-                except Exception as gen_err:
-                    err_str = str(gen_err)
-                    # Transient network errors — sleep and retry the SAME I2V call.
-                    # NEVER drop to text-only on network errors — that loses the I2V anchor
-                    # and causes character/background drift in subsequent clips.
-                    RETRYABLE = ("503", "Deadline", "Broken pipe", "Errno 32",
-                                 "ConnectionReset", "RemoteDisconnected", "Connection reset",
-                                 "timed out", "timeout")
-                    if any(e in err_str for e in RETRYABLE) and attempt < MAX_RETRIES:
-                        wait = 15 * attempt  # 15s → 30s → 45s
-                        logger.warning(
-                            f"⚠️ Clip {clip.clip} transient network error (attempt {attempt}): "
-                            f"{err_str[:120]} — sleeping {wait}s and retrying with same I2V context…"
-                        )
-                        time.sleep(wait)
-                        continue
-                    # Non-retryable error or retries exhausted — fall back to text-only
-                    logger.warning(
-                        f"⚠️ Clip {clip.clip} generation failed (attempt {attempt}): "
-                        f"{err_str[:120]} — falling back to text-only"
-                    )
-                    operation = generate_clip_text_only(
-                        video_client, request.veo_model, current_prompt,
-                        request.aspect_ratio, clip.clip, request.num_clips,
-                    )
-
-                if operation is None:
-                    if attempt < MAX_RETRIES:
-                        continue
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Clip {clip.clip} timed out after {MAX_RETRIES} attempts.",
-                    )
-
-                try:
-                    video_obj = extract_generated_video(operation, clip.clip)
-                except RaiCelebrityError:
-                    operation = generate_clip_text_only(
-                        video_client, request.veo_model, current_prompt,
-                        request.aspect_ratio, clip.clip, request.num_clips,
-                    )
-                    if operation is None:
-                        video_obj = None
-                    else:
-                        try:
-                            video_obj = extract_generated_video(operation, clip.clip)
-                        except (RaiCelebrityError, RaiContentError):
-                            video_obj = None
-                except RaiContentError:
-                    video_obj = None
-
-                if video_obj is not None:
-                    break
-
-                if attempt == MAX_RETRIES:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Clip {clip.clip} failed after {MAX_RETRIES} attempts.",
-                    )
-
-            # ── Save clip ─────────────────────────────────────────────────
-            clip_path = _unique_video_path(f"clip_{i+1:02d}")
-            video_bytes = download_video(video_obj.uri, api_key)
-            with open(clip_path, "wb") as f:
-                f.write(video_bytes)
-            clip_paths.append(clip_path)
-            logger.info(f"✅ Clip {clip.clip} saved ({len(video_bytes)//1024} KB)")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Video generation error: {e}")
-
-    # ── Stitch ────────────────────────────────────────────────────────────
-    final_path = _unique_video_path("final")
-    if len(clip_paths) > 1:
-        ok = stitch_clips(clip_paths, final_path)
-        if not ok:
-            final_path = clip_paths[0]
-    else:
-        final_path = clip_paths[0]
-
-    # append CTA
-    cta_appended_path = _unique_video_path("final_with_cta")
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(base_dir)
-    cta_video_path = os.path.join(project_root, "assets", "cta.mp4")
-    
-    if os.path.exists(cta_video_path):
-        cta_success = concat_with_normalized_cta(final_path, cta_video_path, cta_appended_path)
-        if cta_success:
-            final_path = cta_appended_path
-        else:
-             logger.warning("Failed to append CTA.")
-    else:
-         logger.warning(f"CTA video not found at: {cta_video_path}")
-
-    return GenerateVideoResponse(
-        video_url=f"/api/video/{os.path.basename(final_path)}",
-        clip_paths=clip_paths,
-        message=f"Successfully generated {request.num_clips} clip(s).",
-    )
-
-
-@app.post("/api/regenerate-clips", response_model=RegenerateClipsResponse)
+@app.post("/api/regenerate-clips", response_model=dict)
 async def regenerate_clips(request: RegenerateClipsRequest):
-    """
-    Accepts specific clip indices, regenerates only those,
-    runs stitch_clips again, and returns the new video.
-    """
-    gemini_client, video_client = _get_clients()
-    api_key = _get_api_key()
+    """Async regeneration — returns job_id, poll /api/jobs/{job_id}."""
+    job_id = uuid.uuid4().hex
 
-    clip_paths = list(request.clip_paths)
-    MAX_RETRIES = 3
+    arMap = {
+        "9:16 (Reels / Shorts)": "9:16",
+        "16:9 (YouTube / Landscape)": "16:9",
+    }
+    ar = arMap.get(request.aspect_ratio, request.aspect_ratio)
 
-    try:
-        for idx in sorted(request.clip_indices):
-            i = idx
-            clip = request.clips[i]
-            logger.info(f"🔄 Regenerating clip {clip.clip}/{request.num_clips}: {clip.scene_summary}")
-            current_prompt = clip.prompt
-            operation = None
+    clips_to_regen = [request.clips[i] for i in sorted(request.clip_indices)]
 
-            # ── Pre-sanitize ──────────────────────────────────────────
-            try:
-                sanitized = sanitize_prompt_for_veo(
-                    gemini_client, current_prompt, clip.clip
+    _jobs[job_id] = {
+        "status": "pending",
+        "step": "Queued for regeneration…",
+        "progress": 0,
+        "result": None,
+        "error": None,
+    }
+
+    def _regen_job():
+        try:
+            gemini_client, video_client = _get_clients()
+            api_key = _get_api_key()
+            clip_paths = list(request.clip_paths)
+            total = len(request.clip_indices)
+
+            for step_idx, idx in enumerate(sorted(request.clip_indices)):
+                clip = request.clips[idx]
+                _update_job(
+                    job_id,
+                    status="generating",
+                    step=f"Regenerating clip {clip.clip}/{request.num_clips}…",
+                    progress=int((step_idx / total) * 80),
                 )
-                if sanitized and len(sanitized) > 100:
-                    current_prompt = sanitized
-            except Exception:
-                pass
-
-            for attempt in range(1, MAX_RETRIES + 1):
-                if attempt > 1:
-                    current_prompt = rephrase_blocked_prompt(
-                        gemini_client, current_prompt, attempt
-                    )
+                current_prompt = clip.prompt
 
                 try:
-                    if i == 0:
-                        # BUG 2 FIX — Clip 1: use anchor reference image if available.
-                        anchor_image_b64 = ""
-                        if hasattr(request, "characters") and request.characters:
-                            for char in request.characters:
-                                if getattr(char, "reference_image_base64", ""):
-                                    anchor_image_b64 = char.reference_image_base64
-                                    break
-                        if anchor_image_b64:
-                            logger.info("🖼️ Regen Clip 1: generating from anchor reference image (I2V)")
-                            operation = generate_clip_from_image(
-                                video_client, request.veo_model, current_prompt,
-                                request.aspect_ratio, clip.clip, request.num_clips,
-                                anchor_image_b64,
-                            )
-                        else:
-                            logger.info("📝 Regen Clip 1: no anchor image — using text-only generation")
+                    sanitized = sanitize_prompt_for_veo(gemini_client, current_prompt, clip.clip)
+                    if sanitized and len(sanitized) > 100:
+                        current_prompt = sanitized
+                except Exception:
+                    pass
+
+                operation = None
+                for attempt in range(1, MAX_RETRIES + 1):
+                    if attempt > 1:
+                        current_prompt = rephrase_blocked_prompt(gemini_client, current_prompt, attempt)
+                    try:
+                        if idx == 0:
                             operation = generate_clip_text_only(
                                 video_client, request.veo_model, current_prompt,
-                                request.aspect_ratio, clip.clip, request.num_clips,
+                                ar, clip.clip, request.num_clips,
                             )
-                    else:
-                        prev_path = clip_paths[i - 1]
-                        next_summary = request.clips[i].scene_summary
-                        operation, current_prompt = generate_clip_with_frame_context(
-                            video_client, gemini_client,
-                            request.veo_model, current_prompt, request.aspect_ratio,
-                            clip.clip, request.num_clips,
-                            prev_path, next_summary,
+                        else:
+                            prev_path = clip_paths[idx - 1]
+                            operation, current_prompt = generate_clip_with_frame_context(
+                                video_client, gemini_client, request.veo_model, current_prompt,
+                                ar, clip.clip, request.num_clips, prev_path, clip.scene_summary,
+                            )
+                    except Exception as gen_err:
+                        logger.warning(f"Regen clip {clip.clip} failed: {gen_err}")
+                        operation = generate_clip_text_only(
+                            video_client, request.veo_model, current_prompt,
+                            ar, clip.clip, request.num_clips,
                         )
-                except Exception as gen_err:
-                    err_str = str(gen_err)
-                    # Transient network errors — sleep and retry the SAME I2V call.
-                    # NEVER drop to text-only on network errors — that loses the I2V anchor.
-                    RETRYABLE = ("503", "Deadline", "Broken pipe", "Errno 32",
-                                 "ConnectionReset", "RemoteDisconnected", "Connection reset",
-                                 "timed out", "timeout")
-                    if any(e in err_str for e in RETRYABLE) and attempt < MAX_RETRIES:
-                        wait = 15 * attempt  # 15s → 30s → 45s
-                        logger.warning(
-                            f"⚠️ Regen Clip {clip.clip} transient network error (attempt {attempt}): "
-                            f"{err_str[:120]} — sleeping {wait}s and retrying with same I2V context…"
-                        )
-                        time.sleep(wait)
-                        continue
-                    # Non-retryable or retries exhausted — fall back to text-only
-                    logger.warning(f"⚠️ Regen Clip {clip.clip} failed: {err_str[:120]} — text-only fallback")
-                    operation = generate_clip_text_only(
-                        video_client, request.veo_model, current_prompt,
-                        request.aspect_ratio, clip.clip, request.num_clips,
-                    )
 
-                if operation is None:
-                    if attempt < MAX_RETRIES:
-                        continue
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Clip {clip.clip} timed out after {MAX_RETRIES} attempts.",
-                    )
-
-                try:
-                    video_obj = extract_generated_video(operation, clip.clip)
-                except RaiCelebrityError:
-                    operation = generate_clip_text_only(
-                        video_client, request.veo_model, current_prompt,
-                        request.aspect_ratio, clip.clip, request.num_clips,
-                    )
                     if operation is None:
+                        continue
+
+                    try:
+                        video_obj = extract_generated_video(operation, clip.clip)
+                    except (RaiCelebrityError, RaiContentError):
                         video_obj = None
-                    else:
-                        try:
-                            video_obj = extract_generated_video(operation, clip.clip)
-                        except (RaiCelebrityError, RaiContentError):
-                            video_obj = None
-                except RaiContentError:
-                    video_obj = None
 
-                if video_obj is not None:
-                    break
-                if attempt == MAX_RETRIES:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Clip {clip.clip} failed after {MAX_RETRIES} attempts.",
-                    )
+                    if video_obj is not None:
+                        break
 
-            # ── Save regenerated clip ─────────────────────────────────
-            clip_path = _unique_video_path(f"clip_{i+1:02d}")
-            video_bytes = download_video(video_obj.uri, api_key)
-            with open(clip_path, "wb") as f:
-                f.write(video_bytes)
-            clip_paths[i] = clip_path
-            logger.info(f"✅ Clip {clip.clip} regenerated ({len(video_bytes)//1024} KB)")
+                clip_path = _unique_video_path(f"clip_{idx + 1:02d}")
+                video_bytes = download_video(video_obj.uri, api_key)
+                with open(clip_path, "wb") as f:
+                    f.write(video_bytes)
+                clip_paths[idx] = clip_path
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Regeneration error: {e}")
+            _update_job(job_id, step="Re-stitching…", progress=88)
+            final_path = _unique_video_path("regen_final")
+            if len(clip_paths) > 1:
+                ok = stitch_clips(clip_paths, final_path)
+                if not ok:
+                    final_path = clip_paths[0]
+            else:
+                final_path = clip_paths[0]
 
-    # ── Re-stitch ─────────────────────────────────────────────────────────
-    final_path = _unique_video_path("regen_final")
-    if len(clip_paths) > 1:
-        ok = stitch_clips(clip_paths, final_path)
-        if not ok:
-            final_path = clip_paths[0]
-    else:
-        final_path = clip_paths[0]
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(base_dir)
+            cta_video_path = os.path.join(project_root, "assets", "cta.mp4")
+            cta_appended_path = _unique_video_path("regen_with_cta")
+            if os.path.exists(cta_video_path):
+                cta_success = concat_with_normalized_cta(final_path, cta_video_path, cta_appended_path)
+                if cta_success:
+                    final_path = cta_appended_path
 
-    # append CTA
-    cta_appended_path = _unique_video_path("regen_with_cta")
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(base_dir)
-    cta_video_path = os.path.join(project_root, "assets", "cta.mp4")
+            _update_job(
+                job_id,
+                status="done",
+                step="Complete!",
+                progress=100,
+                result={
+                    "video_url": f"/api/video/{os.path.basename(final_path)}",
+                    "clip_paths": clip_paths,
+                    "message": f"Regenerated {len(request.clip_indices)} clip(s).",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Regen job {job_id} failed: {e}", exc_info=True)
+            _update_job(job_id, status="error", step="Failed", error=str(e))
 
-    if os.path.exists(cta_video_path):
-        cta_success = concat_with_normalized_cta(final_path, cta_video_path, cta_appended_path)
-        if cta_success:
-            final_path = cta_appended_path
-
-    return RegenerateClipsResponse(
-        video_url=f"/api/video/{os.path.basename(final_path)}",
-        clip_paths=clip_paths,
-        message=f"Successfully regenerated {len(request.clip_indices)} clip(s).",
-    )
+    _executor.submit(_regen_job)
+    return {"job_id": job_id, "message": "Regeneration queued."}
 
 
-# Serve generated videos 
 @app.get("/api/video/{filename}")
 async def serve_video(filename: str):
-    """Serve a generated video file from the temp directory."""
+    """Serve generated video — filename validated against path traversal."""
+    # Strict validation: only alphanumeric, dots, underscores, hyphens
+    if not re.match(r"^[\w.\-]+\.mp4$", filename):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+
     path = os.path.join(TMP, filename)
+    # Ensure the resolved path is still inside TMP (prevents traversal)
+    if not os.path.realpath(path).startswith(os.path.realpath(TMP)):
+        raise HTTPException(status_code=400, detail="Invalid path.")
+
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Video file not found.")
-    return FileResponse(path, media_type="video/mp4", filename=filename)
+
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=filename,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+# ── Global error handler ───────────────────────────────────────────────────
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled error on {request.url.path}: {exc}", exc_info=True)
+    # Don't leak internal details in production
+    detail = str(exc) if os.getenv("ENVIRONMENT") != "production" else "Internal server error."
+    return JSONResponse(status_code=500, content={"detail": detail})

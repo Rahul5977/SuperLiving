@@ -1,43 +1,194 @@
 @import "tailwindcss";
 
+/* ── Design tokens ─────────────────────────────────────────────── */
 :root {
-  --background: #071a0f;
-  --foreground: #e8f5ee;
-  --accent: #25a85a;
-  --accent-dim: #1a7a3c;
-  --muted: #7ecfa0;
-  --card-bg: rgba(255, 255, 255, 0.04);
-  --card-border: rgba(37, 168, 90, 0.18);
+  /* Backgrounds */
+  --bg-base:         #07090f;
+  --bg-surface:      #0d1321;
+  --bg-elevated:     #111827;
+  --bg-glass:        rgba(15, 20, 36, 0.70);
+  --bg-glass-hover:  rgba(24, 32, 52, 0.80);
+
+  /* Accent: indigo + cyan */
+  --accent:          #6366f1;
+  --accent-bright:   #818cf8;
+  --accent-dim:      #4f46e5;
+  --accent-glow:     rgba(99, 102, 241, 0.30);
+  --accent-2:        #06b6d4;
+  --accent-2-glow:   rgba(6, 182, 212, 0.22);
+
+  /* Borders */
+  --border:          rgba(99, 102, 241, 0.15);
+  --border-bright:   rgba(99, 102, 241, 0.38);
+  --border-subtle:   rgba(255, 255, 255, 0.06);
+
+  /* Text */
+  --text-primary:    #eef2ff;
+  --text-secondary:  #94a3b8;
+  --text-muted:      #475569;
+
+  /* Status */
+  --success:         #10b981;
+  --error:           #f43f5e;
+  --warning:         #f59e0b;
+
+  /* Radii */
+  --r-sm:  8px;
+  --r-md:  14px;
+  --r-lg:  20px;
+  --r-xl:  28px;
+
+  /* Shadows */
+  --shadow-card: 0 2px 20px rgba(0,0,0,0.40), inset 0 1px 0 rgba(255,255,255,0.04);
+  --shadow-glow: 0 0 40px var(--accent-glow), 0 4px 24px rgba(0,0,0,0.40);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-accent: var(--accent);
-  --color-accent-dim: var(--accent-dim);
-  --color-muted: var(--muted);
+  --color-background: var(--bg-base);
+  --color-foreground: var(--text-primary);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+/* ── Reset & base ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+
 body {
-  background: linear-gradient(135deg, #071a0f 0%, #0d2b1a 100%);
-  color: var(--foreground);
-  font-family: "Inter", Arial, Helvetica, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: "Inter", system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
+/* Layered radial mesh background */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 90% 70% at 8%  -5%,  rgba(99,102,241,0.13) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 60% at 95% 105%,  rgba(6,182,212,0.09)  0%, transparent 55%),
+    radial-gradient(ellipse 50% 40% at 55%  60%,  rgba(99,102,241,0.04) 0%, transparent 65%);
 }
-::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
+
+body > * { position: relative; z-index: 1; }
+
+/* ── Scrollbar ──────────────────────────────────────────────────── */
+::-webkit-scrollbar            { width: 5px; }
+::-webkit-scrollbar-track      { background: transparent; }
+::-webkit-scrollbar-thumb      { background: var(--accent); border-radius: 99px; opacity: 0.5; }
+::-webkit-scrollbar-thumb:hover{ background: var(--accent-bright); }
+
+/* ── Glass card ─────────────────────────────────────────────────── */
+.glass {
+  background: var(--bg-glass);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
+  transition: border-color 0.25s, box-shadow 0.25s;
 }
-::-webkit-scrollbar-thumb {
-  background: rgba(37, 168, 90, 0.3);
-  border-radius: 4px;
+.glass:hover {
+  border-color: var(--border-bright);
+  box-shadow: var(--shadow-glow);
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(37, 168, 90, 0.5);
+
+/* ── Gradient text ──────────────────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(130deg, var(--accent-bright) 0%, var(--accent-2) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
+
+/* ── Primary button ─────────────────────────────────────────────── */
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%);
+  color: #fff;
+  border: none;
+  box-shadow: 0 0 22px var(--accent-glow), 0 4px 14px rgba(0,0,0,0.30);
+  transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1),
+              box-shadow 0.2s ease,
+              opacity 0.15s ease;
+}
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.025);
+  box-shadow: 0 0 36px var(--accent-glow), 0 8px 28px rgba(0,0,0,0.40);
+}
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+}
+.btn-primary:disabled {
+  opacity: 0.50;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ── Skeleton shimmer ────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.035) 25%,
+    rgba(255,255,255,0.075) 50%,
+    rgba(255,255,255,0.035) 75%
+  );
+  background-size: 1200px 100%;
+  animation: shimmer 1.8s infinite linear;
+  border-radius: var(--r-sm);
+}
+
+/* ── Progress bar fill ───────────────────────────────────────────── */
+@keyframes progress-pulse {
+  0%, 100% { box-shadow: 0 0 8px  var(--accent-glow); }
+  50%       { box-shadow: 0 0 20px var(--accent-glow), 0 0 8px var(--accent-2-glow); }
+}
+.progress-bar-fill {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  box-shadow: 0 0 12px var(--accent-glow);
+  animation: progress-pulse 2.2s ease-in-out infinite;
+  transition: width 0.5s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* ── Form fields ─────────────────────────────────────────────────── */
+.field {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.field:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.field::placeholder { color: var(--text-muted); }
+select.field option  { background: var(--bg-elevated); color: var(--text-primary); }
+
+/* ── Pulsing dot ─────────────────────────────────────────────────── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1;   transform: scale(1);   }
+  50%       { opacity: 0.4; transform: scale(0.75); }
+}
+.pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+
+/* ── Fade-up entry ───────────────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up {
+  animation: fadeUp 0.45s cubic-bezier(0.22,1,0.36,1) both;
+}
+
+/* ── Checkbox accent ─────────────────────────────────────────────── */
+input[type="checkbox"] { accent-color: var(--accent); }

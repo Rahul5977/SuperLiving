@@ -1,39 +1,37 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import ConfigPanel from "@/components/ConfigPanel";
 import PromptEditor from "@/components/PromptEditor";
 import VideoResult from "@/components/VideoResult";
 import CharacterUpload from "@/components/CharacterUpload";
+import JobsPanel from "@/components/JobsPanel";
+import { api, type ClipPrompt, type CharacterAnalysis } from "@/lib/api";
+import { useJobPoller, type Job } from "@/hooks/useJobPoller";
 
-/* ─── Types ─────────────────────────────────────────────────────────────── */
+// ── Constants ──────────────────────────────────────────────────────────────
 
-export interface CharacterAnalysis {
-  appearance: string;
-  outfit: string;
-}
+const AR_MAP: Record<string, string> = {
+  "9:16 (Reels / Shorts)": "9:16",
+  "16:9 (YouTube / Landscape)": "16:9",
+};
 
-export interface ClipPrompt {
-  clip: number;
-  scene_summary: string;
-  last_frame: string;
-  prompt: string;
-}
+// Re-export for components that need them
+export type { ClipPrompt };
+export type { Job };
 
 type Phase = "input" | "review" | "result";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-/* ─── Page Component ────────────────────────────────────────────────────── */
+// ── Page ───────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  // ── Phase state ────────────────────────────────────────────────────────
+  // ── Phase ────────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>("input");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ── Config state (Phase 1) ─────────────────────────────────────────────
+  // ── Config ───────────────────────────────────────────────────────────────
   const [script, setScript] = useState("");
   const [extraPrompt, setExtraPrompt] = useState("");
   const [numClips, setNumClips] = useState(6);
@@ -42,30 +40,45 @@ export default function Home() {
   const [veoModel, setVeoModel] = useState("veo-3.1-generate-preview");
   const [languageNote, setLanguageNote] = useState(true);
 
-  // ── Character state ────────────────────────────────────────────────────
+  // ── Characters ───────────────────────────────────────────────────────────
   const [usePhotos, setUsePhotos] = useState(false);
-  const [characters, setCharacters] = useState<
-    { name: string; file: File | null }[]
-  >([
+  const [characters, setCharacters] = useState<{ name: string; file: File | null }[]>([
     { name: "", file: null },
     { name: "", file: null },
   ]);
-  const [, setPhotoAnalyses] = useState<
-    Record<string, CharacterAnalysis>
-  >({});
+  const [photoAnalyses, setPhotoAnalyses] = useState<Record<string, CharacterAnalysis>>({});
 
-  // Note: photoAnalyses state is set during analysis and passed to generate-prompts.
-  // The setter is used in handleGeneratePrompts; the getter is not needed at render time.
-
-  // ── Prompts state (Phase 2) ────────────────────────────────────────────
+  // ── Prompts ──────────────────────────────────────────────────────────────
   const [clips, setClips] = useState<ClipPrompt[]>([]);
   const [characterSheet, setCharacterSheet] = useState("");
 
-  // ── Result state (Phase 3) ─────────────────────────────────────────────
+  // ── Result ───────────────────────────────────────────────────────────────
   const [videoUrl, setVideoUrl] = useState("");
   const [clipPaths, setClipPaths] = useState<string[]>([]);
 
-  /* ─── Phase 1 → Phase 2: Generate Prompts ──────────────────────────── */
+  // ── Jobs (parallel workers) ───────────────────────────────────────────────
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+  const handleJobDone = useCallback((job: Job) => {
+    if (!job.result) return;
+    setVideoUrl(api.videoUrl(job.result.video_url));
+    setClipPaths(job.result.clip_paths);
+    setPhase("result");
+    setLoading(false);
+  }, []);
+
+  const handleJobError = useCallback((job: Job) => {
+    setError(job.error ?? "Generation failed. Please try again.");
+    setLoading(false);
+  }, []);
+
+  const { jobs, activeJob, addJob, setActive } = useJobPoller({
+    apiBase,
+    onJobDone: handleJobDone,
+    onJobError: handleJobError,
+  });
+
+  // ── Phase 1 → Phase 2: Generate prompts ──────────────────────────────────
 
   const handleGeneratePrompts = useCallback(async () => {
     if (!script.trim()) {
@@ -76,156 +89,122 @@ export default function Home() {
     setLoading(true);
 
     try {
-      // Step 1: Analyze character photos if any
       let analyses: Record<string, CharacterAnalysis> = {};
+
       if (usePhotos) {
-        const validChars = characters.filter(
-          (c) => c.name.trim() && c.file
-        );
+        const validChars = characters.filter((c) => c.name.trim() && c.file);
         if (validChars.length > 0) {
-          const formData = new FormData();
-          for (const c of validChars) {
-            formData.append("names", c.name.trim());
-            formData.append("photos", c.file!);
-          }
-          const resp = await fetch(`${API_BASE}/api/analyze-characters`, {
-            method: "POST",
-            body: formData,
-          });
-          if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            throw new Error(err.detail || "Character analysis failed");
-          }
-          const data = await resp.json();
-          analyses = data.analyses;
+          const result = await api.analyzeCharacters(
+            validChars.map((c) => c.name.trim()),
+            validChars.map((c) => c.file!)
+          );
+          analyses = result.analyses;
           setPhotoAnalyses(analyses);
         }
       }
 
-      // Step 2: Generate prompts
-      const resp = await fetch(`${API_BASE}/api/generate-prompts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          script,
-          extra_prompt: extraPrompt,
-          photo_analyses: analyses,
-          aspect_ratio: aspectRatio,
-          num_clips: numClips,
-          language_note: languageNote,
-          has_photos: usePhotos && Object.keys(analyses).length > 0,
-        }),
+      const data = await api.generatePrompts({
+        script,
+        extra_prompt: extraPrompt,
+        photo_analyses: analyses,
+        aspect_ratio: aspectRatio,
+        num_clips: numClips,
+        language_note: languageNote,
+        has_photos: usePhotos && Object.keys(analyses).length > 0,
       });
 
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || "Prompt generation failed");
-      }
-
-      const data = await resp.json();
       setClips(data.clips);
-      setCharacterSheet(data.character_sheet || "");
+      setCharacterSheet(data.character_sheet ?? "");
       setPhase("review");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setLoading(false);
     }
-  }, [
-    script,
-    extraPrompt,
-    usePhotos,
-    characters,
-    aspectRatio,
-    numClips,
-    languageNote,
-  ]);
+  }, [script, extraPrompt, usePhotos, characters, aspectRatio, numClips, languageNote]);
 
-  /* ─── Phase 2 → Phase 3: Generate Video ────────────────────────────── */
+  // ── Phase 2 → Phase 3: Enqueue video generation job ─────────────────────
 
   const handleGenerateVideo = useCallback(async () => {
     setError(null);
     setLoading(true);
 
-    const arMap: Record<string, string> = {
-      "9:16 (Reels / Shorts)": "9:16",
-      "16:9 (YouTube / Landscape)": "16:9",
-    };
-
     try {
-      const resp = await fetch(`${API_BASE}/api/generate-video`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clips,
-          veo_model: veoModel,
-          aspect_ratio: arMap[aspectRatio] || "9:16",
-          num_clips: numClips,
-        }),
+      const { job_id } = await api.generateVideo({
+        clips,
+        veo_model: veoModel,
+        aspect_ratio: AR_MAP[aspectRatio] ?? "9:16",
+        num_clips: numClips,
       });
 
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || "Video generation failed");
-      }
-
-      const data = await resp.json();
-      setVideoUrl(`${API_BASE}${data.video_url}`);
-      setClipPaths(data.clip_paths);
-      setPhase("result");
+      addJob({
+        id: job_id,
+        label: `Ad · ${numClips} clips · ${new Date().toLocaleTimeString()}`,
+        status: "pending",
+        step: "Queued…",
+        progress: 0,
+        result: null,
+        error: null,
+        createdAt: Date.now(),
+      });
+      // loading stays true — cleared by onJobDone / onJobError
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
       setLoading(false);
     }
-  }, [clips, veoModel, aspectRatio, numClips]);
+  }, [clips, veoModel, aspectRatio, numClips, addJob]);
 
-  /* ─── Phase 3: Regenerate Selected Clips ───────────────────────────── */
+  // ── Phase 3: Regenerate selected clips ────────────────────────────────────
 
   const handleRegenerate = useCallback(
     async (indices: number[]) => {
       setError(null);
       setLoading(true);
 
-      const arMap: Record<string, string> = {
-        "9:16 (Reels / Shorts)": "9:16",
-        "16:9 (YouTube / Landscape)": "16:9",
-      };
-
       try {
-        const resp = await fetch(`${API_BASE}/api/regenerate-clips`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            clip_indices: indices,
-            clips,
-            clip_paths: clipPaths,
-            veo_model: veoModel,
-            aspect_ratio: arMap[aspectRatio] || "9:16",
-            num_clips: numClips,
-          }),
+        const { job_id } = await api.regenerateClips({
+          clip_indices: indices,
+          clips,
+          clip_paths: clipPaths,
+          veo_model: veoModel,
+          aspect_ratio: AR_MAP[aspectRatio] ?? "9:16",
+          num_clips: numClips,
         });
 
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          throw new Error(err.detail || "Clip regeneration failed");
-        }
-
-        const data = await resp.json();
-        setVideoUrl(`${API_BASE}${data.video_url}`);
-        setClipPaths(data.clip_paths);
+        addJob({
+          id: job_id,
+          label: `Regen clips ${indices.map((i) => i + 1).join(",")} · ${new Date().toLocaleTimeString()}`,
+          status: "pending",
+          step: "Queued…",
+          progress: 0,
+          result: null,
+          error: null,
+          createdAt: Date.now(),
+        });
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Unknown error");
-      } finally {
         setLoading(false);
       }
     },
-    [clips, clipPaths, veoModel, aspectRatio, numClips]
+    [clips, clipPaths, veoModel, aspectRatio, numClips, addJob]
   );
 
-  /* ─── Reset ─────────────────────────────────────────────────────────── */
+  // ── Open a completed job from the sidebar ─────────────────────────────────
 
-  const handleReset = () => {
+  const handleOpenJob = useCallback(
+    (job: Job) => {
+      if (job.status !== "done" || !job.result) return;
+      setVideoUrl(api.videoUrl(job.result.video_url));
+      setClipPaths(job.result.clip_paths);
+      setActive(job.id);
+      setPhase("result");
+    },
+    [setActive]
+  );
+
+  // ── Reset ─────────────────────────────────────────────────────────────────
+
+  const handleReset = useCallback(() => {
     setPhase("input");
     setClips([]);
     setVideoUrl("");
@@ -233,46 +212,93 @@ export default function Home() {
     setError(null);
     setCharacterSheet("");
     setPhotoAnalyses({});
-  };
+    setLoading(false);
+    setActive(null);
+  }, [setActive]);
 
-  /* ─── Render ────────────────────────────────────────────────────────── */
+  // ── Stats for header badge ─────────────────────────────────────────────────
+  const runningJobs = jobs.filter((j) =>
+    ["pending", "generating", "stitching"].includes(j.status)
+  ).length;
+  const doneJobs = jobs.filter((j) => j.status === "done").length;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <main className="min-h-screen">
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
-        <div
-          className="mb-8 flex items-center gap-4 rounded-2xl px-6 py-5"
-          style={{
-            background: "linear-gradient(90deg, #1a7a3c, #25a85a)",
-            boxShadow: "0 4px 24px rgba(26,122,60,0.35)",
-          }}
-        >
-          <span className="text-4xl">🎬</span>
-          <div>
-            <h1 className="text-2xl font-bold text-white">
-              SuperLiving — Ad Generator
-            </h1>
-            <p className="mt-0.5 text-sm text-white/80">
-              Transform your scripts into high-impact video ads for Tier 3 &amp;
-              4 India · Powered by AI
-            </p>
-          </div>
-        </div>
+      <div className="mx-auto max-w-7xl px-4 pt-6 pb-20 sm:px-6 lg:px-8">
 
-        {/* ── Error Banner ──────────────────────────────────────────────── */}
+        {/* Header */}
+        <motion.header
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] }}
+          className="mb-8 flex items-center justify-between"
+        >
+          <div className="flex items-center gap-4">
+            <div
+              className="flex h-11 w-11 items-center justify-center rounded-2xl text-xl"
+              style={{
+                background: "linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%)",
+                boxShadow: "0 0 24px var(--accent-glow)",
+              }}
+            >
+              🎬
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">
+                SuperLiving{" "}
+                <span className="gradient-text">Ad Generator</span>
+              </h1>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Veo · Gemini · 4 parallel workers
+              </p>
+            </div>
+          </div>
+
+          {/* Live job badge */}
+          <AnimatePresence>
+            {jobs.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="glass flex items-center gap-2 rounded-2xl px-4 py-2"
+              >
+                <span
+                  className="h-2 w-2 rounded-full"
+                  style={{
+                    background: runningJobs > 0 ? "var(--accent)" : "var(--success)",
+                    boxShadow: runningJobs > 0 ? "0 0 6px var(--accent-glow)" : "none",
+                    animation: runningJobs > 0 ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+                  }}
+                />
+                <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                  {runningJobs > 0 ? `${runningJobs} generating` : `${doneJobs} done`}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.header>
+
+        {/* Error banner */}
         <AnimatePresence>
           {error && (
             <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-red-300"
+              initial={{ opacity: 0, y: -8, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: "auto" }}
+              exit={{ opacity: 0, y: -8, height: 0 }}
+              className="mb-5 flex items-center gap-3 overflow-hidden rounded-xl px-4 py-3"
+              style={{
+                background: "rgba(244,63,94,0.08)",
+                border: "1px solid rgba(244,63,94,0.28)",
+                color: "#fb7185",
+              }}
             >
-              ⚠️ {error}
+              <span className="text-sm flex-1">⚠️ {error}</span>
               <button
                 onClick={() => setError(null)}
-                className="ml-3 text-red-400 hover:text-red-200"
+                className="flex-shrink-0 text-xs opacity-50 hover:opacity-100 transition-opacity"
               >
                 ✕
               </button>
@@ -280,132 +306,150 @@ export default function Home() {
           )}
         </AnimatePresence>
 
-        {/* ── Phase Router ──────────────────────────────────────────────── */}
-        <AnimatePresence mode="wait">
-          {phase === "input" && (
-            <motion.div
-              key="input"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.3 }}
-            >
-              <div className="grid gap-8 lg:grid-cols-5">
-                <div className="lg:col-span-3">
-                  <ConfigPanel
-                    script={script}
-                    setScript={setScript}
-                    extraPrompt={extraPrompt}
-                    setExtraPrompt={setExtraPrompt}
-                    numClips={numClips}
-                    setNumClips={setNumClips}
-                    durationLabel={durationLabel}
-                    setDurationLabel={setDurationLabel}
-                    aspectRatio={aspectRatio}
-                    setAspectRatio={setAspectRatio}
-                    veoModel={veoModel}
-                    setVeoModel={setVeoModel}
-                    languageNote={languageNote}
-                    setLanguageNote={setLanguageNote}
-                  />
-                </div>
-                <div className="lg:col-span-2">
-                  <CharacterUpload
-                    usePhotos={usePhotos}
-                    setUsePhotos={setUsePhotos}
-                    characters={characters}
-                    setCharacters={setCharacters}
-                  />
-                </div>
-              </div>
+        {/* Main layout */}
+        <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
 
-              {/* Generate Button */}
-              <div className="mt-8 flex justify-center">
-                <button
-                  onClick={handleGeneratePrompts}
-                  disabled={loading}
-                  className="rounded-xl px-10 py-3.5 text-lg font-bold text-white transition-all hover:opacity-90 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{
-                    background: "linear-gradient(90deg, #1a7a3c, #25a85a)",
-                  }}
+          {/* Content area */}
+          <div>
+            <AnimatePresence mode="wait">
+
+              {/* ── INPUT PHASE ──────────────────────────────────────── */}
+              {phase === "input" && (
+                <motion.div
+                  key="input"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] }}
+                  className="space-y-6"
                 >
-                  {loading ? (
-                    <span className="flex items-center gap-2">
-                      <svg
-                        className="h-5 w-5 animate-spin"
-                        viewBox="0 0 24 24"
-                      >
-                        <circle
-                          className="opacity-25"
-                          cx="12"
-                          cy="12"
-                          r="10"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                          fill="none"
+                  <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+                    <ConfigPanel
+                      script={script} setScript={setScript}
+                      extraPrompt={extraPrompt} setExtraPrompt={setExtraPrompt}
+                      numClips={numClips} setNumClips={setNumClips}
+                      durationLabel={durationLabel} setDurationLabel={setDurationLabel}
+                      aspectRatio={aspectRatio} setAspectRatio={setAspectRatio}
+                      veoModel={veoModel} setVeoModel={setVeoModel}
+                      languageNote={languageNote} setLanguageNote={setLanguageNote}
+                    />
+                    <CharacterUpload
+                      usePhotos={usePhotos} setUsePhotos={setUsePhotos}
+                      characters={characters} setCharacters={setCharacters}
+                    />
+                  </div>
+
+                  <div className="flex justify-center pt-2">
+                    <button
+                      onClick={handleGeneratePrompts}
+                      disabled={loading}
+                      className="btn-primary rounded-2xl px-12 py-4 text-base font-semibold tracking-wide"
+                    >
+                      {loading ? (
+                        <CyclingLoader
+                          steps={["Analyzing script…", "Parsing characters…", "Building prompts…", "Almost ready…"]}
                         />
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                        />
-                      </svg>
-                      Generating Prompts…
-                    </span>
-                  ) : (
-                    "🎬  Generate Prompts"
-                  )}
-                </button>
-              </div>
-            </motion.div>
-          )}
+                      ) : (
+                        "✦ Generate Prompts"
+                      )}
+                    </button>
+                  </div>
+                </motion.div>
+              )}
 
-          {phase === "review" && (
-            <motion.div
-              key="review"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.3 }}
-            >
-              <PromptEditor
-                clips={clips}
-                setClips={setClips}
-                characterSheet={characterSheet}
-                setCharacterSheet={setCharacterSheet}
-                onConfirm={handleGenerateVideo}
-                onBack={() => setPhase("input")}
-                loading={loading}
-              />
-            </motion.div>
-          )}
+              {/* ── REVIEW PHASE ─────────────────────────────────────── */}
+              {phase === "review" && (
+                <motion.div
+                  key="review"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] }}
+                >
+                  <PromptEditor
+                    clips={clips} setClips={setClips}
+                    characterSheet={characterSheet} setCharacterSheet={setCharacterSheet}
+                    onConfirm={handleGenerateVideo}
+                    onBack={() => setPhase("input")}
+                    loading={loading}
+                    activeJob={activeJob}
+                  />
+                </motion.div>
+              )}
 
-          {phase === "result" && (
-            <motion.div
-              key="result"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.3 }}
-            >
-              <VideoResult
-                videoUrl={videoUrl}
-                clips={clips}
-                setClips={setClips}
-                numClips={numClips}
-                onRegenerate={handleRegenerate}
-                onReset={handleReset}
-                loading={loading}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
+              {/* ── RESULT PHASE ─────────────────────────────────────── */}
+              {phase === "result" && (
+                <motion.div
+                  key="result"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] }}
+                >
+                  <VideoResult
+                    videoUrl={videoUrl} clips={clips}
+                    setClips={setClips} numClips={numClips}
+                    onRegenerate={handleRegenerate} onReset={handleReset}
+                    loading={loading} activeJob={activeJob}
+                  />
+                </motion.div>
+              )}
 
-        {/* ── Footer ────────────────────────────────────────────────────── */}
-        <p className="mt-12 pb-8 text-center text-xs text-[#555]">
-          SuperLiving Internal Tool · AI-Powered Ad Generator · 8s max per clip
+            </AnimatePresence>
+          </div>
+
+          {/* Sidebar */}
+          <aside className="lg:sticky lg:top-6 lg:self-start">
+            <JobsPanel
+              jobs={jobs}
+              activeJobId={activeJob?.id ?? null}
+              onOpenJob={handleOpenJob}
+            />
+          </aside>
+        </div>
+
+        <p className="mt-16 text-center text-xs" style={{ color: "var(--text-muted)" }}>
+          SuperLiving Internal Tool · AI-Powered · Up to 4 parallel jobs
         </p>
       </div>
     </main>
+  );
+}
+
+// ── Cycling loading text component ────────────────────────────────────────
+
+function CyclingLoader({ steps }: { steps: string[] }) {
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    const t = setInterval(() => setIdx((i) => (i + 1) % steps.length), 1800);
+    return () => clearInterval(t);
+  }, [steps.length]);
+
+  return (
+    <span className="flex items-center gap-2.5">
+      {/* Animated dots */}
+      <span className="flex gap-1">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="block h-1.5 w-1.5 rounded-full bg-white/60"
+            style={{ animation: `pulse-dot 1.2s ease-in-out ${i * 0.2}s infinite` }}
+          />
+        ))}
+      </span>
+      {/* Cycling text */}
+      <AnimatePresence mode="wait">
+        <motion.span
+          key={idx}
+          initial={{ opacity: 0, y: 5 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -5 }}
+          transition={{ duration: 0.18 }}
+        >
+          {steps[idx]}
+        </motion.span>
+      </AnimatePresence>
+    </span>
   );
 }

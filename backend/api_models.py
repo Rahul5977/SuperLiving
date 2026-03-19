@@ -1,7 +1,7 @@
 """Pydantic models for request/response validation."""
 
+from typing import Any, Optional
 from pydantic import BaseModel, Field
-from typing import Optional
 
 
 # ── Shared / Sub-models ──────────────────────────────────────────────────────
@@ -21,10 +21,7 @@ class ClipPrompt(BaseModel):
 # ── POST /api/analyze-characters ─────────────────────────────────────────────
 
 class AnalyzeCharactersResponse(BaseModel):
-    analyses: dict[str, CharacterAnalysis] = Field(
-        default_factory=dict,
-        description="Mapping of character name → locked appearance/outfit analysis",
-    )
+    analyses: dict[str, CharacterAnalysis] = Field(default_factory=dict)
 
 
 # ── POST /api/generate-prompts ───────────────────────────────────────────────
@@ -45,13 +42,14 @@ class GeneratePromptsResponse(BaseModel):
     character_sheet: str = ""
 
 
-# ── POST /api/generate-video ─────────────────────────────────────────────────
+# ── POST /api/generate-video (async job) ─────────────────────────────────────
 
 class GenerateVideoRequest(BaseModel):
     clips: list[ClipPrompt]
     veo_model: str = "veo-3.1-generate-preview"
     aspect_ratio: str = "9:16"
     num_clips: int = Field(default=6, ge=1, le=8)
+    characters: list[Any] = Field(default_factory=list)
 
 
 class GenerateVideoResponse(BaseModel):
@@ -60,13 +58,21 @@ class GenerateVideoResponse(BaseModel):
     message: str = ""
 
 
+# ── Job status (async polling) ────────────────────────────────────────────────
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str   # "pending" | "generating" | "stitching" | "done" | "error"
+    step: str = ""
+    progress: int = 0  # 0-100
+    result: Optional[dict] = None
+    error: Optional[str] = None
+
+
 # ── POST /api/regenerate-clips ───────────────────────────────────────────────
 
 class RegenerateClipsRequest(BaseModel):
-    clip_indices: list[int] = Field(
-        ...,
-        description="0-based indices of clips to regenerate",
-    )
+    clip_indices: list[int] = Field(..., description="0-based indices of clips to regenerate")
     clips: list[ClipPrompt]
     clip_paths: list[str]
     veo_model: str = "veo-3.1-generate-preview"
@@ -87,10 +93,7 @@ class CharacterProfile(BaseModel):
     name: str
     physical_baseline: str
     outfit: str
-    reference_image_base64: str = Field(
-        default="",
-        description="Base64-encoded 9:16 reference face from Imagen (populated by Phase 2)",
-    )
+    reference_image_base64: str = Field(default="")
 
 
 class AgenticPipelineRequest(BaseModel):

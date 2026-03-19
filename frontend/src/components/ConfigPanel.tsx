@@ -2,32 +2,18 @@
 
 import { Dispatch, SetStateAction } from "react";
 
-/* ─── Props ─────────────────────────────────────────────────────────────── */
-
 interface Props {
-  script: string;
-  setScript: Dispatch<SetStateAction<string>>;
-  extraPrompt: string;
-  setExtraPrompt: Dispatch<SetStateAction<string>>;
-  numClips: number;
-  setNumClips: Dispatch<SetStateAction<number>>;
-  durationLabel: string;
-  setDurationLabel: Dispatch<SetStateAction<string>>;
-  aspectRatio: string;
-  setAspectRatio: Dispatch<SetStateAction<string>>;
-  veoModel: string;
-  setVeoModel: Dispatch<SetStateAction<string>>;
-  languageNote: boolean;
-  setLanguageNote: Dispatch<SetStateAction<boolean>>;
+  script: string;              setScript: Dispatch<SetStateAction<string>>;
+  extraPrompt: string;         setExtraPrompt: Dispatch<SetStateAction<string>>;
+  numClips: number;            setNumClips: Dispatch<SetStateAction<number>>;
+  durationLabel: string;       setDurationLabel: Dispatch<SetStateAction<string>>;
+  aspectRatio: string;         setAspectRatio: Dispatch<SetStateAction<string>>;
+  veoModel: string;            setVeoModel: Dispatch<SetStateAction<string>>;
+  languageNote: boolean;       setLanguageNote: Dispatch<SetStateAction<boolean>>;
 }
 
-/* ─── Helpers ───────────────────────────────────────────────────────────── */
-
 const DURATION_MAP: Record<string, number> = {
-  "15s": 2,
-  "30s": 4,
-  "45s": 6,
-  "60s": 8,
+  "15s": 2, "30s": 4, "45s": 6, "60s": 8,
 };
 
 const ASPECT_OPTIONS = [
@@ -40,150 +26,143 @@ const VEO_MODELS = [
   { label: "Veo 3.0 Preview", value: "veo-3.0-generate-preview" },
 ];
 
-/* ─── Component ─────────────────────────────────────────────────────────── */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mb-2 text-xs font-semibold uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
+      {children}
+    </p>
+  );
+}
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <label className="mb-1.5 block text-xs" style={{ color: "var(--text-secondary)" }}>
+      {children}
+    </label>
+  );
+}
 
 export default function ConfigPanel({
-  script,
-  setScript,
-  extraPrompt,
-  setExtraPrompt,
-  setNumClips,
-  durationLabel,
-  setDurationLabel,
-  aspectRatio,
-  setAspectRatio,
-  veoModel,
-  setVeoModel,
-  languageNote,
-  setLanguageNote,
+  script, setScript,
+  extraPrompt, setExtraPrompt,
+  setNumClips, durationLabel, setDurationLabel,
+  aspectRatio, setAspectRatio,
+  veoModel, setVeoModel,
+  languageNote, setLanguageNote,
 }: Props) {
   const handleDurationChange = (dur: string) => {
     setDurationLabel(dur);
     setNumClips(DURATION_MAP[dur] ?? 6);
   };
 
+  const wordCount = script.split(/\s+/).filter(Boolean).length;
+
   return (
-    <div className="space-y-6">
-      {/* ── Ad Script ────────────────────────────────────────────────────── */}
-      <div
-        className="rounded-2xl border p-6"
-        style={{
-          background: "rgba(255,255,255,0.04)",
-          borderColor: "rgba(37,168,90,0.18)",
-        }}
-      >
-        <label className="mb-2 block text-sm font-semibold text-[#7ecfa0]">
-          📝 Ad Script
-        </label>
+    <div className="space-y-5">
+
+      {/* ── Script ──────────────────────────────────────────────── */}
+      <div className="glass rounded-2xl p-5 fade-up" style={{ animationDelay: "0.04s" }}>
+        <SectionLabel>📝 Ad Script</SectionLabel>
         <textarea
           value={script}
           onChange={(e) => setScript(e.target.value)}
-          rows={10}
-          placeholder="Paste your ad script here (Hindi/English)…"
-          className="w-full resize-y rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-white/30 outline-none focus:border-[#25a85a]/60 focus:ring-1 focus:ring-[#25a85a]/40"
+          rows={11}
+          placeholder="Paste your ad script here (Hindi / English)…"
+          className="field w-full resize-y rounded-xl px-4 py-3 text-sm leading-relaxed"
+          style={{ minHeight: 220 }}
         />
+        <div className="mt-2 flex items-center justify-between">
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Hindi &amp; English supported
+          </span>
+          <span
+            className="rounded-lg px-2 py-0.5 text-xs font-mono"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              color: wordCount > 0 ? "var(--text-secondary)" : "var(--text-muted)",
+            }}
+          >
+            {wordCount} words
+          </span>
+        </div>
       </div>
 
-      {/* ── Settings Grid ────────────────────────────────────────────────── */}
-      <div
-        className="rounded-2xl border p-6"
-        style={{
-          background: "rgba(255,255,255,0.04)",
-          borderColor: "rgba(37,168,90,0.18)",
-        }}
-      >
-        <label className="mb-4 block text-sm font-semibold text-[#7ecfa0]">
-          ⚙️ Settings
-        </label>
-
+      {/* ── Settings ────────────────────────────────────────────── */}
+      <div className="glass rounded-2xl p-5 fade-up" style={{ animationDelay: "0.08s" }}>
+        <SectionLabel>⚙️ Settings</SectionLabel>
         <div className="grid gap-4 sm:grid-cols-2">
-          {/* Duration */}
+
           <div>
-            <label className="mb-1 block text-xs text-white/60">
-              Duration
-            </label>
+            <FieldLabel>Duration</FieldLabel>
             <select
               value={durationLabel}
               onChange={(e) => handleDurationChange(e.target.value)}
-              className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
+              className="field w-full rounded-lg px-3 py-2.5 text-sm"
             >
               {Object.keys(DURATION_MAP).map((d) => (
-                <option key={d} value={d} className="bg-[#0d2b1a]">
+                <option key={d} value={d}>
                   {d} ({DURATION_MAP[d]} clips)
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Aspect Ratio */}
           <div>
-            <label className="mb-1 block text-xs text-white/60">
-              Aspect Ratio
-            </label>
+            <FieldLabel>Aspect Ratio</FieldLabel>
             <select
               value={aspectRatio}
               onChange={(e) => setAspectRatio(e.target.value)}
-              className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
+              className="field w-full rounded-lg px-3 py-2.5 text-sm"
             >
               {ASPECT_OPTIONS.map((a) => (
-                <option key={a} value={a} className="bg-[#0d2b1a]">
-                  {a}
-                </option>
+                <option key={a} value={a}>{a}</option>
               ))}
             </select>
           </div>
 
-          {/* Veo Model */}
           <div>
-            <label className="mb-1 block text-xs text-white/60">
-              Veo Model
-            </label>
+            <FieldLabel>Veo Model</FieldLabel>
             <select
               value={veoModel}
               onChange={(e) => setVeoModel(e.target.value)}
-              className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
+              className="field w-full rounded-lg px-3 py-2.5 text-sm"
             >
               {VEO_MODELS.map((m) => (
-                <option key={m.value} value={m.value} className="bg-[#0d2b1a]">
-                  {m.label}
-                </option>
+                <option key={m.value} value={m.value}>{m.label}</option>
               ))}
             </select>
           </div>
 
-          {/* Language Note */}
-          <div className="flex items-center gap-3 pt-5">
-            <input
-              type="checkbox"
-              checked={languageNote}
-              onChange={(e) => setLanguageNote(e.target.checked)}
-              id="lang-note"
-              className="h-4 w-4 rounded border-white/20 accent-[#25a85a]"
-            />
-            <label htmlFor="lang-note" className="text-xs text-white/60">
-              Include dialogue tone note
+          {/* Toggle */}
+          <div className="flex items-center gap-3 pt-3">
+            <label className="flex cursor-pointer items-center gap-2.5 select-none">
+              <div
+                className="relative h-5 w-9 rounded-full transition-colors duration-200"
+                style={{ background: languageNote ? "var(--accent)" : "rgba(255,255,255,0.1)" }}
+                onClick={() => setLanguageNote((v) => !v)}
+              >
+                <div
+                  className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200"
+                  style={{ left: languageNote ? "calc(100% - 18px)" : "2px" }}
+                />
+              </div>
+              <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                Dialogue tone note
+              </span>
             </label>
           </div>
         </div>
       </div>
 
-      {/* ── Extra Prompt ──────────────────────────────────────────────────── */}
-      <div
-        className="rounded-2xl border p-6"
-        style={{
-          background: "rgba(255,255,255,0.04)",
-          borderColor: "rgba(37,168,90,0.18)",
-        }}
-      >
-        <label className="mb-2 block text-sm font-semibold text-[#7ecfa0]">
-          📎 Additional Instructions (optional)
-        </label>
+      {/* ── Additional instructions ──────────────────────────────── */}
+      <div className="glass rounded-2xl p-5 fade-up" style={{ animationDelay: "0.12s" }}>
+        <SectionLabel>📎 Additional Instructions</SectionLabel>
         <textarea
           value={extraPrompt}
           onChange={(e) => setExtraPrompt(e.target.value)}
           rows={3}
-          placeholder="Product brand guidelines, specific visual references, style notes…"
-          className="w-full resize-y rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-white/30 outline-none focus:border-[#25a85a]/60 focus:ring-1 focus:ring-[#25a85a]/40"
+          placeholder="Brand guidelines, visual references, style notes…"
+          className="field w-full resize-y rounded-xl px-4 py-3 text-sm"
         />
       </div>
     </div>

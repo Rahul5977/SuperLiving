@@ -1,6 +1,9 @@
 fastapi>=0.115.0
-uvicorn>=0.34.0
+uvicorn[standard]>=0.34.0
+uvloop>=0.21.0
+httptools>=0.6.0
 python-dotenv>=1.1.0
 python-multipart>=0.0.20
 google-genai>=1.14.0
 imageio-ffmpeg>=0.5.1
+pydantic>=2.0.0
