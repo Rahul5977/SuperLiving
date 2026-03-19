@@ -89,7 +89,7 @@ export default function CharacterUpload({
           >
             <span className="text-2xl opacity-25">📁</span>
             <p className="max-w-[35] text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              Enable to upload reference photos for face-locked generation. Without photos, Gemini auto-generates a character sheet.
+              Upload character photo for face lock I2V generation (Optional)
             </p>
           </motion.div>
         ) : (
