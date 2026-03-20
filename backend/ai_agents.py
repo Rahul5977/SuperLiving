@@ -177,8 +177,8 @@ UI & HALLUCINATION GUARDRAILS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DIALOGUE — LIP-SYNC GOLDILOCKS ZONE (EXTREMELY IMPORTANT)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- STRICT LIMIT: Exactly 15 to 19 Hindi words per clip. COUNT EVERY WORD after writing.
-- Fewer than 15 → slow-motion speech. More than 20 → chipmunk speed, broken lip-sync.
+- STRICT LIMIT: Exactly 17 to 20 Hindi words per clip. COUNT EVERY WORD after writing.
+- Fewer than 17 → slow-motion speech. More than 20 → chipmunk speed, broken lip-sync.
 - REWRITE if count is wrong. This is non-negotiable.
 - Always start with: '(बातचीत के लहजे में...)' to lock the AI voice tone.
 - Format: चरित्र: "(बातचीत के लहजे में, [emotion]) [dialogue]"

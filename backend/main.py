@@ -779,10 +779,10 @@ RULES YOU MUST ENFORCE (reject or fix anything that violates these)
 ═══════════════════════════════════════════════════════
  
 1. WORD COUNT — GOLDILOCKS ZONE
-   - DIALOGUE must be 15–19 Hindi/Hinglish words. Count every word.
-   - Under 15 = slow-motion speech. Over 19 = chipmunk rush, lip-sync breaks.
-   - Fix: trim or expand dialogue to hit 15–19 words exactly.
- 
+   - DIALOGUE must be 17-20 Hindi/Hinglish words. Count every word.
+   - Under 17 = slow-motion speech. Over 20 = chipmunk rush, lip-sync breaks.
+   - Fix: trim or expand dialogue to hit 17–20 words exactly.
+
 2. SINGLE ACTION ONLY
    - ACTION block must describe ONE emotional state OR one physical state.
    - NEVER: "expression shifts from sad to happy AND he looks down at his phone"

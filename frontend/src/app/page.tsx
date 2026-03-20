@@ -289,7 +289,7 @@ export default function Home() {
 
   /* ─── Render ────────────────────────────────────────────────────────── */
 
-  const showJobsPanel = jobs.length > 0;
+  const showJobsPanel = true
 
   return (
     <main className="min-h-screen">
