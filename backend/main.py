@@ -790,7 +790,7 @@ RULES YOU MUST ENFORCE (reject or fix anything that violates these)
    - Fix: split across clips or keep only the dominant action.
  
 3. LIGHTING — NO HORROR, NO GHOST
-   - NEVER: bottom-up phone light as the ONLY light source ("एकमात्र प्रकाश स्रोत फोन की चमक")
+   - NEVER: bottom-up phone light as the ONLY light source.
    - This creates black eye sockets and ghost/horror faces.
    - Fix: always add a dim warm ambient source (bedside lamp, window glow) from the SIDE or ABOVE. Phone can be secondary accent only.
    - Eye sockets MUST be visible. Add: "⚠️ आँखें clearly visible — कोई काले eye socket shadows नहीं"
@@ -798,35 +798,44 @@ RULES YOU MUST ENFORCE (reject or fix anything that violates these)
 4. PHONE SCREEN TRAP
    - If phone is shown: screen MUST be black. Add "फोन की स्क्रीन काली है — कोई UI, app, text नहीं।"
    - NEVER describe a chat interface, app UI, profile picture, or text on screen.
-   - Veo WILL hallucinate a face/character inside the phone if not explicitly blocked.
  
 5. FACE/CHARACTER LOCK
    - Every clip (except clip 1) MUST have a CONTINUING FROM block with exact last-frame description.
    - CONTINUING FROM must include: character expression, hand position, full background object inventory.
-   - If missing: add it using the previous clip's LAST FRAME.
  
-6. BACKGROUND LOCK
+6. BACKGROUND LOCK — FATAL IF VIOLATED
    - LOCATION block must be IDENTICAL in every clip (copy-paste verbatim from clip 1).
    - Must end with: "पृष्ठभूमि पूरी तरह स्थिर और अपरिवर्तित रहती है — कोई नई वस्तु नहीं आएगी, कोई वस्तु गायब नहीं होगी, रंग नहीं बदलेगा।"
+   - If CONTINUING FROM mentions a DIFFERENT location than the LOCKED BACKGROUND (e.g., "brick wall / cafe" vs "bedroom") — this is a FATAL error. Fix the CONTINUING FROM to match the locked background.
  
 7. NO MULTIPLE CHARACTERS IN FRAME
-   - If only one character is described, NEVER allow second person to appear.
-   - "दूसरा व्यक्ति" / "other person" references cause AI to hallucinate a second face.
-   - Fix: remove the second character entirely, or describe them as "पीठ कैमरे की ओर" (back to camera, never showing face).
+   - Only ONE character should be visible on screen at any time.
+   - A second character's FACE must NEVER appear in the frame.
+   - Off-screen sounds (laughter, voice) are allowed ONLY in the AUDIO block.
  
-8. EMOTIONAL AUTHENTICITY — THE AD MUST CONNECT
+8. NO VOICEOVER — ZERO TOLERANCE
+   - NEVER assign dialogue to a character who is NOT physically on screen.
+   - Keywords to flag: "वॉयसओवर", "voiceover", "off-screen", "ऑफ-स्क्रीन", "(VO)", "voice over"
+   - Veo has no face to sync voiceover to — it generates broken lip movements or silence.
+   - Fix: Convert all voiceover lines into the ON-SCREEN character's narrated speech.
+     BAD:  "ऋषिका (वॉयसओवर): 'यार चिल कर...'"
+     GOOD: "राहुल: '(बातचीत के लहजे में) रिशिका ने बोला — यार चिल कर...'"
+   - The on-screen character quotes, remembers, or paraphrases what the off-screen character said.
+ 
+9. EMOTIONAL AUTHENTICITY — THE AD MUST CONNECT
    - The ad must make the viewer FEEL something: recognition, relief, hope, belonging.
    - Dialogue must sound like a REAL person talking to a friend — not a script being read.
    - NO LinkedIn-poster language. NO motivational clichés.
-   - Rishika's lines must feel like a "yaar" not a "coach". Warm, casual, specific.
    - The protagonist's pain must be VERBATIM real — use exact phrases Indian users say.
    - Clip 1 hook must grab in 3 seconds. If not, flag it.
  
-9. FORMAT PROHIBITIONS — every clip must state these:
-   "No cinematic letterbox bars. No black bars. Full 9:16 vertical portrait frame edge to edge. No burned-in subtitles. No text overlays. No lower thirds. No captions. No watermarks. No on-screen app UI."
+10. FORMAT PROHIBITIONS — every clip must state these:
+    "No cinematic letterbox bars. No black bars. Full 9:16 vertical portrait frame edge to edge. No burned-in subtitles. No text overlays. No lower thirds. No captions. No watermarks. No on-screen app UI."
  
-10. FACE LOCK STATEMENT — must appear in every clip:
+11. FACE LOCK STATEMENT — must appear in every clip:
     "⚠️ चेहरा पूरी तरह स्थिर और क्लिप 1 के समान रहेगा — चेहरे की बनावट, त्वचा का रंग, आँखें, होंठ, बाल — कोई परिवर्तन नहीं।"
+ 
+12. LAST FRAME — must appear in every clip with full background object inventory.
  
 ═══════════════════════════════════════════════════════
 OUTPUT FORMAT — respond ONLY with valid JSON, no markdown
@@ -845,9 +854,10 @@ OUTPUT FORMAT — respond ONLY with valid JSON, no markdown
   "summary": "One line: what was wrong overall and what was fixed"
 }
  
-Be specific in issues. Not "lighting problem" — say "bottom-up phone light as only source will cause ghost/horror face — added bedside lamp as warm fill from right side."
+Be specific in issues. Not "voiceover problem" — say "Clip 3 has Rishika voiceover — Veo cannot lip-sync off-screen character. Converted to Rahul quoting Rishika's line in his own dialogue."
 If a prompt is already perfect: status = "approved", issues = [], improved_prompt = original.
 """
+ 
  
  
 @app.post("/api/verify-prompts", response_model=VerifyPromptsResponse)
