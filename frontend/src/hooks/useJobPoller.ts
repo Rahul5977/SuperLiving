@@ -14,6 +14,17 @@ export interface Job {
   error?: string | null;
   createdAt: number;
 }
+function mapStatus(backendStatus: string): JobStatus {
+  switch (backendStatus) {
+    case "pending":   return "pending";
+    case "running":   return "generating";
+    case "done":      return "done";
+    case "failed":
+    case "cancelled": return "error";
+    default:          return "pending";
+  }
+}
+
 
 interface UseJobPollerOptions {
   apiBase: string;
@@ -61,10 +72,10 @@ export function useJobPoller({
 
       const poll = async () => {
         try {
-          const res = await fetch(`${apiBase}/api/jobs/${jobId}`);
+          const res = await fetch(`${apiBase}/api/job-status/${jobId}`);
           if (!res.ok) return;
           const data = await res.json();
-
+          const mappedStatus = mapStatus(data.status);
           setJobs((prev) =>
             prev.map((j) =>
               j.id === jobId

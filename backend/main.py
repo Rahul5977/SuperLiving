@@ -883,7 +883,7 @@ Check every rule strictly. Return JSON only."""
         client = anthropic.Anthropic(api_key=anthropic_key)
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=8000,
+            max_tokens=16000,
             system=CLAUDE_VERIFY_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}]
         )
