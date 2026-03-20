@@ -90,7 +90,7 @@ export default function JobsPanel({ jobs, activeJobId, onOpenJob }: Props) {
             <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
               Parallel Workers Ready
             </p>
-            <p className="mt-1 max-w-[200px] text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            <p className="mt-1 max-w-50 text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
               Generate prompts and start generating to run up to 4 jobs simultaneously.
             </p>
           </div>
@@ -162,7 +162,7 @@ function JobCard({
     >
       <div className="flex items-start gap-2.5">
         {/* Status dot */}
-        <div className="mt-1 flex-shrink-0">
+        <div className="mt-1 shrink-0">
           <span
             className="block h-2 w-2 rounded-full"
             style={{
@@ -220,7 +220,7 @@ function JobCard({
         {/* Progress % badge */}
         {isRunning && (
           <span
-            className="flex-shrink-0 text-xs font-mono"
+            className="shrink-0 text-xs font-mono"
             style={{ color: "var(--text-muted)" }}
           >
             {job.progress}%

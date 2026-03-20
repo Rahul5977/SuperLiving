@@ -683,7 +683,7 @@ ABSOLUTE RULES:
 6. Output the sanitized prompt ONLY — no preamble, no explanation, no markdown"""
 
     response = client.models.generate_content(
-        model="gemini-3.1-pro",
+        model="gemini-2.5-pro",
         contents=f"Sanitize this Veo prompt for clip {clip_num}:\n\n{prompt}",
         config=types.GenerateContentConfig(
             system_instruction=system,

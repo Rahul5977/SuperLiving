@@ -14,16 +14,7 @@ export interface Job {
   error?: string | null;
   createdAt: number;
 }
-function mapStatus(backendStatus: string): JobStatus {
-  switch (backendStatus) {
-    case "pending":   return "pending";
-    case "running":   return "generating";
-    case "done":      return "done";
-    case "failed":
-    case "cancelled": return "error";
-    default:          return "pending";
-  }
-}
+
 
 
 interface UseJobPollerOptions {
@@ -34,6 +25,16 @@ interface UseJobPollerOptions {
   onJobError?: (job: Job) => void;
   /** Poll interval in ms. Default 3000. */
   pollIntervalMs?: number;
+}
+function mapStatus(backendStatus: string): JobStatus {
+  switch (backendStatus) {
+    case "pending":   return "pending";
+    case "running":   return "generating";
+    case "done":      return "done";
+    case "failed":
+    case "cancelled": return "error";
+    default:          return "pending";
+  }
 }
 
 export function useJobPoller({
@@ -81,7 +82,7 @@ export function useJobPoller({
               j.id === jobId
                 ? {
                     ...j,
-                    status: data.status as JobStatus,
+                    status: mappedStatus,
                     step: data.step ?? j.step,
                     progress: data.progress ?? j.progress,
                     result: data.result ?? j.result,
