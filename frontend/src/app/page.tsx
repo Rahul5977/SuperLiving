@@ -7,7 +7,8 @@ import PromptEditor from "@/components/PromptEditor";
 import PromptVerifier from "@/components/Promptverifier";
 import VideoResult from "@/components/VideoResult";
 import CharacterUpload from "@/components/CharacterUpload";
-
+import JobsPanel from "@/components/JobsPanel";
+import { useJobPoller, type Job } from "@/hooks/useJobPoller";
 /* ─── Types ─────────────────────────────────────────────────────────────── */
 
 export interface CharacterAnalysis {
@@ -46,7 +47,9 @@ export default function Home() {
 
   // ── Character state ────────────────────────────────────────────────────
   const [usePhotos, setUsePhotos] = useState(false);
-  const [characters, setCharacters] = useState<{ name: string; file: File | null }[]>([
+  const [characters, setCharacters] = useState<
+    { name: string; file: File | null }[]
+  >([
     { name: "", file: null },
     { name: "", file: null },
   ]);
@@ -82,10 +85,13 @@ export default function Home() {
             formData.append("names", c.name.trim());
             formData.append("photos", c.file as File);
           });
-          const analysisResp = await fetch(`${API_BASE}/api/analyze-characters`, {
-            method: "POST",
-            body: formData,
-          });
+          const analysisResp = await fetch(
+            `${API_BASE}/api/analyze-characters`,
+            {
+              method: "POST",
+              body: formData,
+            },
+          );
           if (!analysisResp.ok) {
             const err = await analysisResp.json().catch(() => ({}));
             throw new Error(err.detail || "Character analysis failed");
@@ -112,7 +118,8 @@ export default function Home() {
           aspect_ratio: arMap[aspectRatio] || "9:16",
           num_clips: numClips,
           language_note: languageNote,
-          has_photos: usePhotos && characters.some((c) => c.name.trim() && c.file),
+          has_photos:
+            usePhotos && characters.some((c) => c.name.trim() && c.file),
         }),
       });
 
@@ -130,7 +137,16 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [script, extraPrompt, usePhotos, characters, aspectRatio, numClips, languageNote, characterSheet]);
+  }, [
+    script,
+    extraPrompt,
+    usePhotos,
+    characters,
+    aspectRatio,
+    numClips,
+    languageNote,
+    characterSheet,
+  ]);
 
   /* ─── Phase 2 → Phase 2.5: Trigger Claude Verify ───────────────────── */
 
@@ -228,7 +244,7 @@ export default function Home() {
         setLoading(false);
       }
     },
-    [clips, clipPaths, veoModel, aspectRatio, numClips]
+    [clips, clipPaths, veoModel, aspectRatio, numClips],
   );
 
   /* ─── Reset ─────────────────────────────────────────────────────────── */
@@ -242,6 +258,35 @@ export default function Home() {
     setCharacterSheet("");
     setPhotoAnalyses({});
   };
+  const handleJobDone = useCallback((job: Job) => {
+    if (!job.result) return;
+    setVideoUrl(`${API_BASE}${job.result.video_url}`);
+    setClipPaths(job.result.clip_paths);
+    setPhase("result");
+    setLoading(false);
+  }, []);
+
+  const handleJobError = useCallback((job: Job) => {
+    setError(job.error ?? "Generation failed. Please try again.");
+    setLoading(false);
+  }, []);
+
+  const { jobs, activeJobId, addJob, setActive } = useJobPoller({
+    apiBase: API_BASE,
+    onJobDone: handleJobDone,
+    onJobError: handleJobError,
+  });
+
+  const handleOpenJob = useCallback(
+    (job: Job) => {
+      if (job.status !== "done" || !job.result) return;
+      setVideoUrl(`${API_BASE}${job.result.video_url}`);
+      setClipPaths(job.result.clip_paths);
+      setActive(job.id);
+      setPhase("result");
+    },
+    [setActive],
+  );
 
   /* ─── Render ────────────────────────────────────────────────────────── */
 
@@ -262,7 +307,8 @@ export default function Home() {
               SuperLiving — Ad Generator
             </h1>
             <p className="mt-0.5 text-sm text-white/80">
-              Transform your scripts into high-impact video ads for Tier 3 &amp; 4 India · Powered by AI
+              Transform your scripts into high-impact video ads for Tier 3 &amp;
+              4 India · Powered by AI
             </p>
           </div>
         </div>
@@ -287,13 +333,23 @@ export default function Home() {
                   className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all"
                   style={{
                     background: isActive
-                      ? p === "verify" ? "rgba(99,102,241,0.2)" : "rgba(37,168,90,0.2)"
-                      : isDone ? "rgba(37,168,90,0.1)" : "rgba(255,255,255,0.05)",
+                      ? p === "verify"
+                        ? "rgba(99,102,241,0.2)"
+                        : "rgba(37,168,90,0.2)"
+                      : isDone
+                        ? "rgba(37,168,90,0.1)"
+                        : "rgba(255,255,255,0.05)",
                     color: isActive
-                      ? p === "verify" ? "#818cf8" : "#25a85a"
-                      : isDone ? "#25a85a" : "rgba(255,255,255,0.3)",
+                      ? p === "verify"
+                        ? "#818cf8"
+                        : "#25a85a"
+                      : isDone
+                        ? "#25a85a"
+                        : "rgba(255,255,255,0.3)",
                     border: isActive
-                      ? p === "verify" ? "1px solid rgba(99,102,241,0.4)" : "1px solid rgba(37,168,90,0.4)"
+                      ? p === "verify"
+                        ? "1px solid rgba(99,102,241,0.4)"
+                        : "1px solid rgba(37,168,90,0.4)"
                       : "1px solid transparent",
                   }}
                 >
@@ -303,7 +359,11 @@ export default function Home() {
                 {i < 3 && (
                   <div
                     className="h-px flex-1"
-                    style={{ background: isDone ? "rgba(37,168,90,0.3)" : "rgba(255,255,255,0.08)" }}
+                    style={{
+                      background: isDone
+                        ? "rgba(37,168,90,0.3)"
+                        : "rgba(255,255,255,0.08)",
+                    }}
                   />
                 )}
               </div>
@@ -321,132 +381,165 @@ export default function Home() {
               className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-red-300"
             >
               ⚠️ {error}
-              <button onClick={() => setError(null)} className="ml-3 text-red-400 hover:text-red-200">✕</button>
+              <button
+                onClick={() => setError(null)}
+                className="ml-3 text-red-400 hover:text-red-200"
+              >
+                ✕
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* ── Phase Router ──────────────────────────────────────────────── */}
-        <AnimatePresence mode="wait">
-
-          {phase === "input" && (
-            <motion.div
-              key="input"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.3 }}
-            >
-              <div className="grid gap-8 lg:grid-cols-5">
-                <div className="lg:col-span-3">
-                  <ConfigPanel
-                    script={script}
-                    setScript={setScript}
-                    extraPrompt={extraPrompt}
-                    setExtraPrompt={setExtraPrompt}
-                    numClips={numClips}
-                    setNumClips={setNumClips}
-                    durationLabel={durationLabel}
-                    setDurationLabel={setDurationLabel}
-                    aspectRatio={aspectRatio}
-                    setAspectRatio={setAspectRatio}
-                    veoModel={veoModel}
-                    setVeoModel={setVeoModel}
-                    languageNote={languageNote}
-                    setLanguageNote={setLanguageNote}
-                  />
-                </div>
-                <div className="lg:col-span-2">
-                  <CharacterUpload
-                    usePhotos={usePhotos}
-                    setUsePhotos={setUsePhotos}
-                    characters={characters}
-                    setCharacters={setCharacters}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-8 flex justify-center">
-                <button
-                  onClick={handleGeneratePrompts}
-                  disabled={loading}
-                  className="rounded-xl px-12 py-4 text-lg font-bold text-white transition-all hover:opacity-90 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  style={{ background: "linear-gradient(90deg, #1a7a3c, #25a85a)" }}
+        <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+          <div>
+            <AnimatePresence mode="wait">
+              {phase === "input" && (
+                <motion.div
+                  key="input"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.3 }}
                 >
-                  {loading ? (
-                    <span className="flex items-center gap-2">
-                      <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      Generating Prompts…
-                    </span>
-                  ) : "🎬  Generate Prompts"}
-                </button>
-              </div>
-            </motion.div>
-          )}
+                  <div className="grid gap-8 lg:grid-cols-5">
+                    <div className="lg:col-span-3">
+                      <ConfigPanel
+                        script={script}
+                        setScript={setScript}
+                        extraPrompt={extraPrompt}
+                        setExtraPrompt={setExtraPrompt}
+                        numClips={numClips}
+                        setNumClips={setNumClips}
+                        durationLabel={durationLabel}
+                        setDurationLabel={setDurationLabel}
+                        aspectRatio={aspectRatio}
+                        setAspectRatio={setAspectRatio}
+                        veoModel={veoModel}
+                        setVeoModel={setVeoModel}
+                        languageNote={languageNote}
+                        setLanguageNote={setLanguageNote}
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <CharacterUpload
+                        usePhotos={usePhotos}
+                        setUsePhotos={setUsePhotos}
+                        characters={characters}
+                        setCharacters={setCharacters}
+                      />
+                    </div>
+                  </div>
 
-          {phase === "review" && (
-            <motion.div
-              key="review"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.3 }}
-            >
-              <PromptEditor
-                clips={clips}
-                setClips={setClips}
-                characterSheet={characterSheet}
-                setCharacterSheet={setCharacterSheet}
-                onVerify={handleGoToVerify}
-                onConfirm={handleGenerateVideo}
-                onBack={() => setPhase("input")}
-                loading={loading}
-              />
-            </motion.div>
-          )}
+                  <div className="mt-8 flex justify-center">
+                    <button
+                      onClick={handleGeneratePrompts}
+                      disabled={loading}
+                      className="rounded-xl px-12 py-4 text-lg font-bold text-white transition-all hover:opacity-90 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      style={{
+                        background: "linear-gradient(90deg, #1a7a3c, #25a85a)",
+                      }}
+                    >
+                      {loading ? (
+                        <span className="flex items-center gap-2">
+                          <svg
+                            className="h-5 w-5 animate-spin"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                              fill="none"
+                            />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                            />
+                          </svg>
+                          Generating Prompts…
+                        </span>
+                      ) : (
+                        "🎬  Generate Prompts"
+                      )}
+                    </button>
+                  </div>
+                </motion.div>
+              )}
 
-          {phase === "verify" && (
-            <motion.div
-              key="verify"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.3 }}
-            >
-              <PromptVerifier
-                clips={clips}
-                script={script}
-                onAccept={handleVerifyAccept}
-                onSkip={handleVerifySkip}
-                apiBase={API_BASE}
-              />
-            </motion.div>
-          )}
+              {phase === "review" && (
+                <motion.div
+                  key="review"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <PromptEditor
+                    clips={clips}
+                    setClips={setClips}
+                    characterSheet={characterSheet}
+                    setCharacterSheet={setCharacterSheet}
+                    onVerify={handleGoToVerify}
+                    onConfirm={handleGenerateVideo}
+                    onBack={() => setPhase("input")}
+                    loading={loading}
+                  />
+                </motion.div>
+              )}
 
-          {phase === "result" && (
-            <motion.div
-              key="result"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.3 }}
-            >
-              <VideoResult
-                videoUrl={videoUrl}
-                clips={clips}
-                setClips={setClips}
-                numClips={numClips}
-                onRegenerate={handleRegenerate}
-                onReset={handleReset}
-                loading={loading}
-              />
-            </motion.div>
-          )}
+              {phase === "verify" && (
+                <motion.div
+                  key="verify"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <PromptVerifier
+                    clips={clips}
+                    script={script}
+                    onAccept={handleVerifyAccept}
+                    onSkip={handleVerifySkip}
+                    apiBase={API_BASE}
+                  />
+                </motion.div>
+              )}
 
-        </AnimatePresence>
+              {phase === "result" && (
+                <motion.div
+                  key="result"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <VideoResult
+                    videoUrl={videoUrl}
+                    clips={clips}
+                    setClips={setClips}
+                    numClips={numClips}
+                    onRegenerate={handleRegenerate}
+                    onReset={handleReset}
+                    loading={loading}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          <aside className="lg:sticky lg:top-6 lg:self-start">
+            <JobsPanel
+              jobs={jobs}
+              activeJobId={activeJobId}
+              onOpenJob={handleOpenJob}
+            />
+          </aside>
+        </div>
 
         {/* ── Footer ────────────────────────────────────────────────────── */}
         <p className="mt-12 pb-8 text-center text-xs text-[#555]">
