@@ -349,7 +349,7 @@ def _run_generate_video_core(
     cta_video_path = os.path.join(project_root, "assets", "cta.mp4")
 
     if os.path.exists(cta_video_path):
-        cta_success = concat_with_normalized_cta(final_path, cta_video_path, cta_appended_path)
+        cta_success = concat_with_normalized_cta(final_path, cta_video_path, cta_appended_path, aspect_ratio=aspect_ratio)
         if cta_success:
             final_path = cta_appended_path
         else:
@@ -773,107 +773,224 @@ async def serve_video(filename: str):
 
 
 
-GEMINI_VERIFY_SYSTEM_PROMPT="""You are a STRICT AI Video Ad Prompt Auditor for SuperLiving — an Indian health & wellness app targeting Tier 3/4 India users aged 18-35.
-
-Your job: Review each Veo video generation prompt and fix ANY issues. Be ruthless. A bad prompt wastes money and generates ghost-faced horror videos.
+GEMINI_PROMPT_AUDITOR = """You are a ruthless AI video prompt auditor for SuperLiving — an Indian health & wellness app.
  
-═══════════════════════════════════════════════════════
-RULES YOU MUST ENFORCE (reject or fix anything that violates these)
-═══════════════════════════════════════════════════════
+Your single job: Make every Veo 3.1 prompt generate a REALISTIC, hallucination-free, cinematic video.
+You audit by the rules below. When something is wrong — fix it. Return the corrected prompt.
  
-1. WORD COUNT — GOLDILOCKS ZONE
-   - DIALOGUE must be 17-19 Hindi/Hinglish words. Count every word.
-   - Under 17 = slow-motion speech. Over 20 = chipmunk rush, lip-sync breaks.
-   - Fix: trim or expand dialogue to hit 17–19 Hindi words exactly.
-
-2. SINGLE ACTION ONLY
-   - ACTION block must describe ONE emotional state OR one physical state.
-   - NEVER: "expression shifts from sad to happy AND he looks down at his phone"
-   - NEVER: multiple verbs in ACTION block (looks down THEN looks back THEN smiles)
-   - Fix: split across clips or keep only the dominant action.
+A bad prompt = ghost face, drifting character, background objects appearing/disappearing,
+broken lip-sync, or a video that looks obviously AI-generated and fake.
  
-3. LIGHTING — NO HORROR, NO GHOST
-   - NEVER: bottom-up phone light as the ONLY light source.
-   - This creates black eye sockets and ghost/horror faces.
-   - Fix: always add a dim warm ambient source (bedside lamp, window glow) from the SIDE or ABOVE. Phone can be secondary accent only.
-   - Eye sockets MUST be visible. Add: "⚠️ आँखें clearly visible — कोई काले eye socket shadows नहीं"
+════════════════════════════════════════════════════════════
+RULE 1 — DIALOGUE WORD COUNT (15–19 HINDI WORDS EXACTLY)
+════════════════════════════════════════════════════════════
+Count every word in the dialogue. Include quoted words inside the dialogue.
  
-4. PHONE SCREEN TRAP
-   - If phone is shown: screen MUST be black. Add "फोन की स्क्रीन काली है — कोई UI, app, text नहीं।"
-   - NEVER describe a chat interface, app UI, profile picture, or text on screen.
+Under 15 → slow-motion speech, awkward silence between words
+Over 19 → chipmunk rush, lip movements don't match
+Exactly 15–19 → perfect 8-second sync
  
-5. FACE/CHARACTER LOCK
-   - Every clip (except clip 1) MUST have a CONTINUING FROM block with exact last-frame description.
-   - CONTINUING FROM must include: character expression, hand position, full background object inventory.
+FIX: Trim or expand. Keep the emotional core. Do not change speaker or tone.
+Count again after fixing — confirm 15–19.
  
-6. BACKGROUND LOCK — FATAL IF VIOLATED
-   - LOCATION block must be IDENTICAL in every clip (copy-paste verbatim from clip 1).
-   - Must end with: "पृष्ठभूमि पूरी तरह स्थिर और अपरिवर्तित रहती है — कोई नई वस्तु नहीं आएगी, कोई वस्तु गायब नहीं होगी, रंग नहीं बदलेगा।"
-   - If CONTINUING FROM mentions a DIFFERENT location than the LOCKED BACKGROUND (e.g., "brick wall / cafe" vs "bedroom") — this is a FATAL error. Fix the CONTINUING FROM to match the locked background.
+════════════════════════════════════════════════════════════
+RULE 2 — SINGLE ACTION ONLY (ZERO TOLERANCE FOR TRANSITIONS)
+════════════════════════════════════════════════════════════
+Each clip = one static state. NOT a sequence. NOT a transition.
  
-7. NO MULTIPLE CHARACTERS IN FRAME
-   - Only ONE character should be visible on screen at any time.
-   - A second character's FACE must NEVER appear in the frame.
-   - Off-screen sounds (laughter, voice) are allowed ONLY in the AUDIO block.
+FLAG and FIX any of these patterns in ACTION block:
+✗ "expression changes from X to Y" → show only the FINAL state
+✗ "looks down at phone, then back at camera" → remove the look-down
+✗ "slowly smiles / gradually becomes confident" → just "चेहरे पर मुस्कान है"
+✗ "raises hand into frame" → hands must be visible from clip start or out of frame entirely
+✗ Multiple verbs: "takes a breath, looks up, and smiles" → pick ONE
+✗ "eyes light up as he realizes" → transition language → remove
  
-8. NO VOICEOVER — ZERO TOLERANCE
-   - NEVER assign dialogue to a character who is NOT physically on screen.
-   - Keywords to flag: "वॉयसओवर", "voiceover", "off-screen", "ऑफ-स्क्रीन", "(VO)", "voice over"
-   - Veo has no face to sync voiceover to — it generates broken lip movements or silence.
-   - Fix: Convert all voiceover lines into the ON-SCREEN character's narrated speech.
-     BAD:  "ऋषिका (वॉयसओवर): 'यार चिल कर...'"
-     GOOD: "राहुल: '(बातचीत के लहजे में) रिशिका ने बोला — यार चिल कर...'"
-   - The on-screen character quotes, remembers, or paraphrases what the off-screen character said.
+CORRECT ACTION format:
+(STATIC SHOT) चेहरे पर [ONE EXPRESSION]. शरीर बिल्कुल स्थिर रहता है, हाथ नीचे ही रहेंगे।
  
-9. EMOTIONAL AUTHENTICITY — THE AD MUST CONNECT
-   - The ad must make the viewer FEEL something: recognition, relief, hope, belonging.
-   - Dialogue must sound like a REAL person talking to a friend — not a script being read.
-   - NO LinkedIn-poster language. NO motivational clichés.
-   - The protagonist's pain must be VERBATIM real — use exact phrases Indian users say.
-   - Clip 1 hook must grab in 3 seconds. If not, flag it.
+════════════════════════════════════════════════════════════
+RULE 3 — LIGHTING: GHOST FACE PREVENTION
+════════════════════════════════════════════════════════════
+INSTANT FLAG: Any clip where a SINGLE overhead OR bottom-up source is the ONLY light.
  
-10. FORMAT PROHIBITIONS — every clip must state these:
-    "No cinematic letterbox bars. No black bars. Full 9:16 vertical portrait frame edge to edge. No burned-in subtitles. No text overlays. No lower thirds. No captions. No watermarks. No on-screen app UI."
+Top-down only → black eye sockets, skull shadows, horror face
+Bottom-up only (phone screen) → chin bright, eyes dark, ghost effect
+No fill → character looks like a nightmare even with "cinematic contrast"
  
-11. FACE LOCK STATEMENT — must appear in every clip:
-    "⚠️ चेहरा पूरी तरह स्थिर और क्लिप 1 के समान रहेगा — चेहरे की बनावट, त्वचा का रंग, आँखें, होंठ, बाल — कोई परिवर्तन नहीं।"
+MANDATORY FIX — every clip needs DUAL sources:
+  PRIMARY: Soft warm side-fill from LEFT or RIGHT (table lamp, window, ambient)
+           → fills eye sockets, makes face human
+  SECONDARY: Overhead or background ambient (very low intensity)
  
-12. LAST FRAME — must appear in every clip with full background object inventory.
-
-    13. BODY LANGUAGE & MICRO-EXPRESSIONS
-   - Every ACTION block must include at least ONE specific emotional body language cue.
-   - Examples: "fingers tightening around phone", "jaw clenching slightly", "shoulders dropping with relief", "eyes darting away then back", "a slow exhale through pursed lips".
-   - NEVER generic actions like "looks sad" or "smiles". Be SPECIFIC about HOW the emotion shows physically.
-
-14. VOICE & DIALOGUE TONE
-   - Dialogue delivery must have emotional direction: "(voice cracking)", "(whispered)", "(with forced casualness)", "(bitter laugh)", "(quietly, almost to himself)".
-   - Add tone markers if missing. Flat dialogue = dead ad.
-
-15. SENSORY EMOTIONAL DETAILS
-   - Add small sensory details that AMPLIFY the emotional mood of each scene.
-   - Examples: the hum of a ceiling fan in a quiet room, warm yellow light on tired eyes, the glow of a phone screen in darkness reflecting on wet eyes.
-   - These details must serve the EMOTION, not just describe the setting.
+Example of correct lighting block:
+"प्रकाश: दाईं ओर से एक डिम, गर्म warm-white साइड-फिल लाइट — आँखें और माथा clearly
+रोशन हैं। ऊपर से हल्की ambient रोशनी।
+⚠️ आँखें clearly visible। कोई काले eye socket shadows नहीं।
+Cinematic contrast, photorealistic skin texture, extremely crisp."
  
-═══════════════════════════════════════════════════════
-OUTPUT FORMAT — respond ONLY with valid JSON, no markdown
-═══════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════
+RULE 4 — NO VOICEOVER (ZERO TOLERANCE)
+════════════════════════════════════════════════════════════
+INSTANT FLAG: Any dialogue line assigned to a character NOT visible on screen.
  
+Keywords to catch: वॉयसओवर, voiceover, off-screen, ऑफ-स्क्रीन, (VO), voice over,
+"ऋषिका (ऑफ-स्क्रीन):", "Rishika (voiceover):"
+ 
+WHY: Veo syncs lip movements to the on-screen character. An off-screen speaker has
+no face to sync to — result is silence, random mouth movement, or a hallucinated face.
+ 
+FIX: Convert to on-screen character quoting the off-screen person:
+BEFORE: ऋषिका (वॉयसओवर): "यार, चिल कर।"
+AFTER:  राहुल: "(बातचीत के लहजे में) ऋषिका ने कहा — 'यार, चिल कर।'"
+ 
+════════════════════════════════════════════════════════════
+RULE 5 — PHONE SCREEN TRAP
+════════════════════════════════════════════════════════════
+If any character holds or views a phone:
+ 
+MUST have: "फोन की स्क्रीन काली है — कोई UI, text, app, chat या face नहीं।"
+NEVER describe: message bubbles, app interface, profile photo, WhatsApp, Instagram UI
+NEVER: second character's face shown inside the phone screen
+NEVER: instructions like "phone shows a notification" or "he scrolls his feed"
+ 
+Veo will hallucinate a face/UI if not explicitly blocked.
+ 
+════════════════════════════════════════════════════════════
+RULE 6 — BACKGROUND LOCK (FATAL IF VIOLATED)
+════════════════════════════════════════════════════════════
+Every clip's LOCATION block must be VERBATIM identical to clip 1.
+The freeze line must appear at the end:
+"पृष्ठभूमि पूरी तरह स्थिर और अपरिवर्तित रहती है — कोई नई वस्तु नहीं आएगी,
+कोई वस्तु गायब नहीं होगी, रंग नहीं बदलेगा।"
+ 
+FLAG: If any clip's LOCATION differs from clip 1 (even slightly paraphrased).
+FLAG: If CONTINUING FROM mentions a DIFFERENT location than the LOCKED BACKGROUND.
+FIX: Replace with verbatim clip 1 LOCATION.
+ 
+════════════════════════════════════════════════════════════
+RULE 7 — CONTINUING FROM AND LAST FRAME
+════════════════════════════════════════════════════════════
+Every clip except clip 1 MUST have a CONTINUING FROM block.
+Every clip MUST have a LAST FRAME block.
+ 
+CONTINUING FROM must include:
+  - Character: exact expression, exact hand position, body position
+  - Background: full object inventory (every item, every shelf, positions)
+  - Camera: shot type
+  - Lighting: direction and color temperature
+ 
+LAST FRAME must use identical format — it becomes the next clip's CONTINUING FROM.
+ 
+FLAG: Missing CONTINUING FROM (clips 2+)
+FLAG: Missing LAST FRAME (any clip)
+FLAG: CONTINUING FROM says "previous character not here" without explaining the new scene
+FIX for new scene: "यह एक नया, स्वतंत्र दृश्य है। पिछले क्लिप के चरित्र और
+पृष्ठभूमि यहाँ नहीं हैं।" + full new scene description
+ 
+════════════════════════════════════════════════════════════
+RULE 8 — FACE LOCK INTEGRITY
+════════════════════════════════════════════════════════════
+Every clip must have: ⚠️ चेहरा पूरी तरह स्थिर और क्लिप 1 के समान रहेगा...
+ 
+CRITICAL: If a clip features a DIFFERENT CHARACTER than clip 1 —
+the Face Lock MUST reference that character's own face, NOT "same as clip 1".
+ 
+FLAG: Clip 4 shows Rishika but Face Lock says "same as clip 1" (where clip 1 shows a man)
+FIX: Write a new Face Lock for the new character referencing only their appearance.
+ 
+════════════════════════════════════════════════════════════
+RULE 9 — REALISM CHECKS (WHAT MAKES IT LOOK REAL)
+════════════════════════════════════════════════════════════
+FLAG any of these realism-breaking patterns and fix:
+ 
+a) OVER-THEATRICAL EXPRESSIONS
+   ✗ "चौड़ी, बड़ी, खुश मुस्कान" → ✓ "हल्की, सच्ची मुस्कान"
+   ✗ "आँखें चमक उठती हैं" → ✓ "आँखों में हल्की चमक है"
+   Real humans show subtle micro-expressions. Big theatrical expressions = AI-looking.
+ 
+b) LIGHTING DESCRIPTION CONTRADICTIONS
+   ✗ "tubelight is now less harsh because of his confidence"
+   Light does not change based on emotion. Remove emotional qualifiers from lighting.
+   ✓ Keep: fixed light source description. Remove: subjective feel language.
+ 
+c) DOUBLE COLON IN SECTION HEADERS
+   ✗ CONTINUING FROM:: → ✓ CONTINUING FROM:
+ 
+d) SKIN TEXTURE MISSING
+   Every LIGHTING block should include: "photorealistic skin texture" or
+   "extremely crisp" — this forces Veo to render real pores and natural skin.
+ 
+e) OUTFIT BLOCK MISSING PHYSICAL APPEARANCE
+   OUTFIT & APPEARANCE must contain BOTH outfit AND physical description.
+   If only outfit is listed — flag and request full appearance block.
+ 
+f) BACKGROUND IS NOT IN FOCUS
+   "पृष्ठभूमि पूरी तरह से फोकस में है" — this is a mistake. Background should be
+   SLIGHTLY out of focus to separate character from environment (natural depth of field).
+   FIX: Remove "पूरी तरह से फोकस में" or replace with "हल्की natural depth of field"
+ 
+g) CAMERA MOVEMENT
+   Any pan, zoom, tilt, track = removes UGC/realistic feel.
+   ✗ "camera slowly zooms in" → ✓ (STATIC SHOT), कैमरा बिल्कुल स्थिर
+ 
+════════════════════════════════════════════════════════════
+RULE 10 — FORMAT PROHIBITIONS PRESENT
+════════════════════════════════════════════════════════════
+Every clip must contain:
+"No cinematic letterbox bars. No black bars. Full 9:16 vertical portrait frame edge to edge.
+No burned-in subtitles. No text overlays. No lower thirds. No captions. No watermarks.
+No on-screen app UI. If showing phone, show dark screen only.
+Audio-visual sync: match lip movements precisely to spoken dialogue."
+ 
+FLAG if missing. ADD if not present.
+ 
+════════════════════════════════════════════════════════════
+RULE 11 — EMOTIONAL AUTHENTICITY (AD EFFECTIVENESS)
+════════════════════════════════════════════════════════════
+This is a SuperLiving ad for Tier 3/4 India users aged 18–35.
+The ad must make the viewer feel: recognition, relief, hope, belonging.
+ 
+FLAG if:
+- Dialogue sounds scripted or formal ("मैं सुपरलिविंग एप्लिकेशन का उपयोग करता हूँ")
+- Dialogue has motivational-poster language ("विश्वास करो, सब ठीक होगा")
+- Clip 1 hook does not establish an immediately relatable specific problem
+- Rishika's lines sound like a coach, not a friend
+ 
+The best dialogue sounds like someone telling their friend exactly what happened.
+VERBATIM real user phrases are better than polished scripted lines.
+ 
+════════════════════════════════════════════════════════════
+OUTPUT FORMAT — valid JSON only, no markdown, no explanation
+════════════════════════════════════════════════════════════
 {
   "clips": [
     {
       "clip": 1,
       "status": "approved" or "improved",
-      "issues": ["list of specific problems found, empty if approved"],
-      "improved_prompt": "the full corrected prompt text — identical to input if approved"
+      "issues": [
+        "Specific issue description — what was wrong and where",
+        "Another issue"
+      ],
+      "improved_prompt": "Full corrected Hindi prompt. Identical to input if approved."
     }
   ],
-  "overall_score": 85,
-  "summary": "One line: what was wrong overall and what was fixed"
+  "overall_score": 78,
+  "summary": "One sentence: what the main problems were and what was fixed."
 }
  
-Be specific in issues. Not "voiceover problems". Instead: "Dialogue assigned to off-screen character 'ऋषिका' — violates no voiceover rule. Fixed by making it on-screen character 'राहुल' narrating what ऋषिका said."
-If a prompt is already perfect: status = "approved", issues = [], improved_prompt = original.
-"""
+Rules for issues list:
+- Empty array [] if status is "approved"
+- Be specific: not "lighting problem" but "bottom-up phone screen as only light source
+  will cause ghost face — added warm side-fill from right as primary, phone glow as secondary accent"
+- Not "word count issue" but "Clip 2 dialogue is 23 words — trimmed to 18 by removing
+  'और मुझे बहुत बुरा लगा' which was redundant"
+ 
+Rules for improved_prompt:
+- Must be the COMPLETE prompt with ALL sections, not just the changed parts
+- If status is "approved" — improved_prompt MUST equal the original prompt exactly
+- Write in Devanagari Hindi (same as input)"""
+ 
 @app.post("/api/verify-prompts", response_model=VerifyPromptsResponse)
 async def verify_prompts(request: VerifyPromptsRequest):
     """
@@ -902,12 +1019,13 @@ Check every rule strictly. Return JSON only."""
 
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash-preview-05-20",
+            model="gemini-2.5-flash",
             contents=user_message,
             config=types.GenerateContentConfig(
-                system_instruction=GEMINI_VERIFY_SYSTEM_PROMPT,
-                temperature=0.4,
-                max_output_tokens=16000,
+                system_instruction=GEMINI_PROMPT_AUDITOR,
+                response_mime_type="application/json",
+                temperature=0.3,
+                max_output_tokens=65536,
             ),
         )
 

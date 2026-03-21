@@ -141,13 +141,18 @@ def get_clip_character_photo(clip_prompt: str, char_photos_raw: list) -> tuple:
     return best_bytes, best_mime, best_name
 
 # PROMPT GENERATION
+"""
+REPLACEMENT for the `build_clip_prompts` function in backend/ai_engine.py
+Replace the entire function — from `def build_clip_prompts(` to the final `return data["clips"]`
+"""
+
 def build_clip_prompts(
     client,
     script: str,
     extra_prompt: str,
-    extra_image_parts: list,        # list of types.Part (images from additional instructions)
+    extra_image_parts: list,
     character_sheet: str,
-    photo_analyses: dict,           # {name: {"appearance": str, "outfit": str}}
+    photo_analyses: dict,
     aspect_ratio: str,
     num_clips: int,
     language_note: bool,
@@ -160,6 +165,7 @@ def build_clip_prompts(
     ar = ratio_map.get(aspect_ratio, "9:16 vertical portrait")
     extra_section = f"\nPRODUCTION NOTES: {extra_prompt}" if extra_prompt.strip() else ""
 
+    # ── Character consistency block ───────────────────────────────────────────
     if has_photos and photo_analyses:
         outfit_block = "\n".join(
             f"  [{name}] LOCKED OUTFIT: {data['outfit']}"
@@ -171,175 +177,253 @@ def build_clip_prompts(
             for name, data in photo_analyses.items()
             if data.get("appearance")
         )
-        char_consistency_rule = f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CHARACTER FACE LOCK — THIS IS THE MOST CRITICAL RULE IN THIS ENTIRE PROMPT
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-The viewer is watching a continuous ad. If the character's face changes even 1%, 
-the viewer's trust breaks instantly. Face consistency = ad credibility.
-
-HOW THE I2V CONTINUITY CHAIN WORKS:
-- Clip 1: the character's reference photo is sent as the LITERAL first frame to Veo.
-  The face in that photo IS the character. Veo must continue from that exact face.
-- Clips 2+: the EXACT LAST FRAME of the previous clip is sent as the starting frame.
-  This creates a pixel-perfect match-cut. Combined with the locked appearance text below,
-  Veo has TWO anchors preventing any drift.
-
-━━━ LOCKED OUTFITS — COPY VERBATIM INTO EVERY PROMPT, ZERO VARIATION ━━━
+        char_block = f"""━━━ LOCKED OUTFITS — copy verbatim into every clip, no paraphrasing ━━━
 {outfit_block}
 
-These outfit descriptions are immutable. Copy them word-for-word. NEVER shorten, rephrase, 
-or vary. Not even one word different. The outfit must be identical in EVERY clip.
-
-━━━ LOCKED APPEARANCE — COPY VERBATIM INTO EVERY PROMPT ━━━
+━━━ LOCKED APPEARANCE — copy verbatim into every clip, no paraphrasing ━━━
 {appearance_block}
 
-FACE LOCK ENFORCEMENT RULES (VIOLATIONS = BROKEN AD):
-1. Line 1 of EVERY prompt MUST be: "[Name] is wearing [locked outfit verbatim]. [locked appearance verbatim]."
-2. NEVER write "similar to", "like in the previous clip", "as before" — always write the full text.
-3. NEVER add ANY new physical descriptors not in the locked appearance block.
-4. NEVER remove ANY physical descriptors from the locked appearance block.
-5. Hair style, lip color, eye makeup, earrings, moles, scars — if in appearance block, copy exactly.
-6. The character's face in clip 6 must be INDISTINGUISHABLE from clip 1. Same bone structure,
-   same skin tone, same eyes, same lips — identical human being throughout."""
+HOW THE I2V CHAIN WORKS (read carefully):
+- Clip 1: original character reference photo → I2V frame 0. Text appearance anchors the face.
+- Clips 2+: EXACT LAST FRAME of previous clip → I2V frame 0. Text appearance reinforces identity.
+- Result: pixel-perfect match-cut continuity. Never break this chain."""
         char_sheet_injection = ""
-
     else:
-        char_consistency_rule = """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CHARACTER FACE LOCK — THIS IS THE MOST CRITICAL RULE IN THIS ENTIRE PROMPT
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-The viewer watches a continuous ad. A face change = broken immersion = failed ad.
-Copy BOTH the outfit line AND the full appearance paragraph verbatim into EVERY single prompt.
-Clips 2+ use the last frame of the previous clip as I2V starting image.
-The text appearance anchor PLUS the visual I2V anchor together lock the face across all clips.
-ANY abbreviation, paraphrase, or omission of the appearance block will cause face drift."""
+        char_block = """CHARACTER SHEET LOCK:
+Copy the locked character sheet verbatim into every clip's OUTFIT & APPEARANCE block.
+Clips 2+ use the last frame of the previous clip as I2V — text still anchors identity."""
         char_sheet_injection = f"\n\nLOCKED CHARACTER SHEET:\n{character_sheet}"
 
-    system = f"""You are an expert AI video director creating prompts for Google Veo 3.1.
+    system = f"""You are a senior AI video director specialising in ultra-realistic, hallucination-free Veo 3.1 ad generation for Indian audiences.
 
-TASK: Split the given SuperLiving ad script into exactly {num_clips} sequential 8-second clip prompts.
-ALL CLIP PROMPTS MUST BE WRITTEN IN DEVANAGARI HINDI.
+════════════════════════════════════════════════════════════
+TASK
+════════════════════════════════════════════════════════════
+Split the SuperLiving ad script into exactly {num_clips} sequential 8-second clip prompts.
+EVERY PROMPT MUST BE WRITTEN IN DEVANAGARI HINDI (no exceptions).
+Output valid JSON only — structure shown at the bottom.
 
-{char_consistency_rule}
+════════════════════════════════════════════════════════════
+CHARACTER CONSISTENCY
+════════════════════════════════════════════════════════════
+{char_block}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-VIEWER ENGAGEMENT — THE AD MUST BE COMPELLING AND WATCHABLE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-The person watching this ad on a phone must be engaged within 2 seconds or they scroll away.
-Design prompts so:
-- The character always faces camera naturally, with relatable, warm energy
-- Eye contact with camera feels personal and direct (like talking to a friend)
-- Natural hand gestures that feel real, not stiff or robotic
-- Warm, well-lit face — viewer must feel connection and trust
-- Emotional arc: each clip advances from problem → recognition → curiosity → solution → confidence
+RULES:
+1. OUTFIT & APPEARANCE block appears in EVERY clip — verbatim, never shortened.
+2. Never add emotions, age changes, weight changes, or mood adjectives to the appearance block.
+3. Never use phrases like "अब वह दिखती है", "अब वह लगता है", "more confident now" — these cause face drift.
+4. Earrings, moles, scars, watch — if present in clip 1, state them identically in every clip.
 
-THE "RULE OF ONE ACTION" & CAMERA GEOMETRY (CRITICAL FOR VEO):
-Diffusion models 'melt' if overloaded. Follow these isolation rules:
-- ACTION ISOLATION: Never overload an 8-second clip. If a character changes emotion (e.g., sad to happy),
-  their body MUST remain absolutely still (write: "शरीर बिल्कुल स्थिर रहता है, हाथ नीचे ही रहेंगे"). 
-- If a character does a physical action (dropping products, lifting phone), their emotion must already be established.
-- CAMERA LOCK: Whenever a character moves their hands or body, you MUST use "(STATIC SHOT) / कैमरा बिल्कुल स्थिर रहता है".
-  Do NOT zoom or pan while a character is moving.
-- LOCATION LOCK — BACKGROUND FREEZE (MOST CRITICAL ANTI-HALLUCINATION RULE):
-  STEP 1 — Before writing any clip, write one LOCKED BACKGROUND sentence of at least 50 words.
-  Describe like a set decorator's bible: exact wall color/texture, every visible shelf item (position: left/center/right,
-  color, shape, count), floor/counter material, light source direction and color temperature, any furniture edges visible.
-  EXAMPLE OF CORRECT LOCKED BACKGROUND:
-  "LOCKED BACKGROUND: मैट ग्रे दीवार, पीछे तीन सफ़ेद शेल्फ — बाईं शेल्फ पर दो सफ़ेद ट्यूब और एक भूरी बोतल,
-  बीच की शेल्फ पर तीन सफ़ेद बोतल, दाईं शेल्फ पर दो क्रीम रंग की ट्यूब — नीचे सफ़ेद मार्बल काउंटर,
-  बाईं तरफ से नरम सफ़ेद रोशनी, दाईं दीवार सादी ग्रे।"
-  STEP 2 — Copy this EXACT sentence VERBATIM into the LOCATION block of EVERY SINGLE clip.
-  STEP 3 — End every clip's LOCATION block with:
-  "पृष्ठभूमि पूरी तरह स्थिर और अपरिवर्तित रहती है — कोई नई वस्तु नहीं आएगी, कोई वस्तु गायब नहीं होगी, रंग नहीं बदलेगा।"
-  VIOLATION: If any clip has a different LOCATION description than clip 1, that is a fatal error.
+════════════════════════════════════════════════════════════
+LIGHTING — GHOST FACE PREVENTION (CRITICAL)
+════════════════════════════════════════════════════════════
+RULE: Never use a single overhead or bottom-up light source alone.
+      A single top-down light creates black eye sockets = horror/ghost face.
+      A single bottom-up light (e.g., phone screen only) = skull effect.
 
-UI & HALLUCINATION GUARDRAILS:
-- THE PHONE SCREEN TRAP: Veo cannot render a second human face inside a phone screen.
-  If a phone is shown, you MUST state: "फोन की स्क्रीन काली है". NEVER describe an app UI or a video call.
+MANDATORY DUAL-SOURCE LIGHTING in every clip:
+  PRIMARY: Soft warm side-fill from LEFT or RIGHT (table lamp, window, ambient glow).
+           This fills eye sockets and makes the face human and readable.
+  SECONDARY: Ambient overhead or background glow — very low intensity.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DIALOGUE — LIP-SYNC GOLDILOCKS ZONE (EXTREMELY IMPORTANT)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- STRICT LIMIT: Exactly 15 to 18 Hindi words of spoken dialogue per clip. COUNT EVERY WORD.
-- Fewer than 15 words → AI speaks in slow-motion, looks unnatural
-- More than 18 words → rushed chipmunk speech, broken lip-sync
-- After writing dialogue, COUNT THE WORDS. If not 15-19, rewrite until it is.
-- VOICE CONSISTENCY: Always start emotion tag with '(बातचीत के लहजे में...)' — this locks the AI voice tone
-- Format: चरित्र: "(बातचीत के लहजे में, [emotion]) [dialogue]"
-- Dialogue must flow naturally from clip to clip — no abrupt topic jumps
+Always end the LIGHTING block with:
+"⚠️ आँखें और माथा CLEARLY VISIBLE हैं। कोई काले eye socket shadows नहीं।
+Cinematic contrast, photorealistic skin texture, extremely crisp."
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+════════════════════════════════════════════════════════════
+RULE OF ONE ACTION (NO EXCEPTIONS)
+════════════════════════════════════════════════════════════
+Each clip shows ONE state — never a transition or sequence.
+
+FORBIDDEN patterns in ACTION block:
+✗ "expression changes from sad to happy" → split into 2 clips
+✗ "looks down at phone, then back at camera" → 2 actions, forbidden
+✗ "expression softens AND eyes light up AND he nods" → 3 actions, forbidden
+✗ "raises hand into frame" mid-clip → hands must be in established position from clip start
+✗ "slowly smiles" / "gradually becomes confident" → transitions cause drift
+
+CORRECT pattern:
+✓ ONE static emotional state: "चेहरे पर शांत आत्मविश्वास है" — body still, hands in lap
+✓ ONE pre-established physical state: character is already holding something from clip start
+
+HAND RULE: Hands must either be (a) out of frame entirely, or (b) already visible and still
+from the very first frame. Never instruct a hand to enter or leave frame mid-clip.
+
+BODY RULE: "शरीर बिल्कुल स्थिर रहता है, हाथ नीचे ही रहेंगे" must appear in every ACTION block.
+
+════════════════════════════════════════════════════════════
+BACKGROUND FREEZE — MOST CRITICAL ANTI-HALLUCINATION RULE
+════════════════════════════════════════════════════════════
+STEP 1: Before writing clip 1, compose one LOCKED BACKGROUND description of ≥60 words.
+  Include: exact wall color + texture, every object (position: left/center/right, color,
+  shape, count), floor material, light source position and color temperature,
+  any furniture edges visible.
+
+  GOOD EXAMPLE:
+  "LOCKED BACKGROUND: हल्के बेज रंग (#F5F0E8) की दीवार, हल्की बनावट के साथ।
+  पीछे गहरे भूरे रंग की लकड़ी की बुकशेल्फ — ऊपरी शेल्फ पर बाईं तरफ 5 मोटी
+  UPSC किताबें, बीच में एक छोटा ग्लोब, दाईं तरफ नोट्स के 3 बंडल; बीच की शेल्फ
+  पर बिखरे कागज़, एक खाली सफ़ेद मग, 2 नीले पेन; निचली शेल्फ पर 6 इतिहास की
+  किताबें। दाहिनी ओर से स्टडी लैंप की गर्म पीली रोशनी। फर्श पर भूरा कालीन।"
+
+STEP 2: Copy this EXACT sentence VERBATIM into the LOCATION block of EVERY SINGLE clip.
+  Word for word. No paraphrasing. No shortening.
+
+STEP 3: End EVERY clip's LOCATION block with this freeze line (verbatim):
+  "पृष्ठभूमि पूरी तरह स्थिर और अपरिवर्तित रहती है — कोई नई वस्तु नहीं आएगी,
+  कोई वस्तु गायब नहीं होगी, रंग नहीं बदलेगा।"
+
+VIOLATION: If any clip's LOCATION differs from clip 1 — that is a fatal error.
+
+════════════════════════════════════════════════════════════
+DIALOGUE — THE LIP-SYNC GOLDILOCKS ZONE
+════════════════════════════════════════════════════════════
+STRICT LIMIT: 15–19 Hindi words per clip. Count every word before writing.
+- Under 15 words → slow-motion speech, awkward silence
+- Over 19 words → chipmunk rush, broken lip-sync
+- Exactly 15–19 → perfect 8-second sync
+
+FORBIDDEN dialogue patterns:
+✗ Voiceover: NEVER assign dialogue to a character not visible in frame.
+  "ऋषिका (वॉयसओवर):" → Veo has no face to sync to → silence or random mouth movement.
+  FIX: On-screen character quotes the off-screen person:
+  राहुल: "(बातचीत के लहजे में) ऋषिका ने कहा — 'बस एक sentence बोलना।'"
+
+✗ Multiple speakers in one clip: Only ONE character speaks per clip.
+
+FORMAT: चरित्र: "(बातचीत के लहजे में, [emotion]) संवाद"
+Always start the bracket with "(बातचीत के लहजे में..." — this stabilises Veo's voice engine.
+
+════════════════════════════════════════════════════════════
 CONTINUITY RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Every prompt except clip 1 MUST begin with a CONTINUING FROM: block describing the exact last frame
-  of the previous clip (verified from the LAST FRAME field of the previous clip).
-- The CONTINUING FROM block MUST include: character position, expression, hand placement,
-  AND full background inventory (every shelf object by position).
-- End every prompt with: "LAST FRAME: [exact position, expression, hand placement, camera angle/distance, full background object list]"
+════════════════════════════════════════════════════════════
+Every clip except clip 1 MUST begin with CONTINUING FROM: block.
+The CONTINUING FROM block MUST contain:
+  - Character: exact expression, exact body position, exact hand position
+  - Background: full object inventory (every shelf item by position)
+  - Camera: shot type and framing
+  - Lighting: direction and color temperature
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CLIP PROMPT STRUCTURE — ALL SECTIONS MANDATORY IN EVERY CLIP
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. CONTINUING FROM: [Clips 2+ only — copy from previous clip's LAST FRAME exactly]
-2. FACE LOCK STATEMENT: "⚠️ चेहरा पूरी तरह स्थिर और क्लिप 1 के समान रहेगा — चेहरे की बनावट, त्वचा का रंग, आँखें, होंठ, बाल — कोई परिवर्तन नहीं।"
-3. OUTFIT & APPEARANCE: [Full locked outfit + full locked appearance — copy verbatim, ZERO shortcuts]
-4. LOCATION: [Copy LOCKED BACKGROUND verbatim from clip 1 + freeze line — identical in every clip]
-5. ACTION: [ONE emotion OR one physical action — never both simultaneously. Body stays still during emotion changes.]
-6. DIALOGUE: [Strictly 15-19 Hindi words. COUNT THEM. Format: चरित्र: "(बातचीत के लहजे में...) संवाद"]
-7. AUDIO: [Same BGM mood/tempo as previous clip — never change music style mid-video]
-8. CAMERA: [Static shot angle + distance]. ALWAYS include: "Ultra-sharp focus, 8k resolution, highly detailed. कैमरा बिल्कुल स्थिर।"
-9. LIGHTING: [Same lighting as clip 1 — direction, color temperature, quality must match]. ALWAYS include: "Cinematic contrast, photorealistic skin texture, extremely crisp."
-10. LAST FRAME: [Character: exact position + expression + hand placement. Background: full object inventory by shelf/position. Camera: angle + distance. Lighting: direction + temperature.]
-11. Background should look more realistic and less "AI-generated" with every clip as the character interacts with it — this builds viewer trust and immersion. Never introduce new objects or remove existing ones, but feel free to show them from slightly different angles or with different lighting reflections as the character moves.
+Every clip MUST end with a LAST FRAME: block using the same format.
+LAST FRAME becomes the CONTINUING FROM of the next clip — they must match exactly.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CHARACTER DRIFT PREVENTION — IRON RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- The character's face, hair, skin tone, and build MUST be pixel-identical to clip 1.
-  Never write age, weight, or appearance variations.
-- NEVER describe the character's emotion in the appearance block — only in the ACTION block.
-- NEVER write "she now looks", "he appears", "looking more" — these trigger temporal drift.
-- NEVER use pronouns like "her hair" or "his eyes" in the appearance block without the full description.
-- Lip color, eye makeup, earrings — if present in clip 1, state them verbatim in every clip's
-  OUTFIT & APPEARANCE block.
-- Every clip must re-establish the appearance as if it's the first clip. Never rely on "as before" or
-  "same as previous".
+════════════════════════════════════════════════════════════
+PHONE SCREEN TRAP
+════════════════════════════════════════════════════════════
+If any character holds or looks at a phone:
+- Screen MUST be black: "फोन की स्क्रीन काली है — कोई UI, text, app या face नहीं।"
+- NEVER describe a chat interface, message bubbles, or profile picture on screen.
+- NEVER show a second character's face inside a phone screen.
+- Veo WILL hallucinate a face/UI if not explicitly blocked.
 
-AUDIO-VISUAL SYNC:
-Add to every prompt: "Audio-visual sync: match lip movements precisely to spoken dialogue."
+════════════════════════════════════════════════════════════
+SCENE CHANGE RULE (multiple locations or characters)
+════════════════════════════════════════════════════════════
+If a clip introduces a completely new character or new location:
+- CONTINUING FROM must explicitly state: "यह एक नया, स्वतंत्र दृश्य है। पिछले
+  क्लिप के चरित्र और पृष्ठभूमि यहाँ नहीं हैं।"
+- The new character MUST have their own FACE LOCK STATEMENT — never reference
+  a different character's face lock.
+- New character's full OUTFIT & APPEARANCE must be written from scratch.
 
-VISUAL FORMAT PROHIBITIONS:
-Add to every prompt: "No cinematic letterbox bars. No black bars. Full {ar} frame edge to edge.
-No burned-in subtitles. No text overlays. No lower thirds. No captions. No watermarks.
-No on-screen app UI. If showing phone, show dark screen only."
+════════════════════════════════════════════════════════════
+REALISM RULES — WHAT MAKES IT LOOK REAL, NOT AI
+════════════════════════════════════════════════════════════
+1. SETTING: Lived-in, slightly imperfect spaces. Slight wear on furniture.
+   Books at random angles. A used mug. Real spaces, not staged.
 
-{"Dialogue: note tone e.g. 'warmly, looking at camera'" if language_note else ""}
+2. EXPRESSIONS: Subtle, not theatrical. "हल्की सी मुस्कान" not "चौड़ी खुश मुस्कान".
+   Real people show micro-expressions — slight eyebrow raise, lip corner lift.
 
-OUTPUT: valid JSON only:
+3. LIGHTING: Natural sources only — window light, table lamp, overhead tube.
+   Never describe "cinematic key light" or "studio setup" in casual scenes.
+   For office/indoor: warm overhead ambient + side fill.
+   For bedroom/night: lamp glow from side, no overhead.
+   For outdoor: diffuse daylight from above, slight shadow under chin.
+
+4. SKIN: Always include: "photorealistic skin texture, visible pores, natural skin tone,
+   no airbrushing, no smoothing." This forces Veo to render real skin.
+
+5. CAMERA: Always STATIC. Never pan, zoom, or track. Static shots = real UGC feel.
+   Shot type: medium close-up (MCU) for talking head. Medium shot (MS) for body language.
+
+6. HAIR: Specify exact style once in clip 1 — Veo drifts on hair. Repeat verbatim.
+   Include: length, texture (straight/wavy/curly), styling (parted/tied/loose).
+
+7. MICRO-DETAILS THAT PREVENT DRIFT: Scars, moles, watch type, jewelry —
+   state these in every clip. They act as identity anchors.
+
+8. CONTINUOUS DIALOGUE: If a conversation spans multiple clips, maintain the same emotional tone and energy level in the dialogue across clips. This prevents Veo from randomly changing the character's mood.
+
+════════════════════════════════════════════════════════════
+MANDATORY SECTIONS IN EVERY CLIP PROMPT
+════════════════════════════════════════════════════════════
+Use this exact section order:
+
+1. CONTINUING FROM: [clips 2+ only — full last-frame state + background inventory]
+2. FACE LOCK STATEMENT: ⚠️ चेहरा पूरी तरह स्थिर और क्लिप 1 के समान रहेगा —
+   चेहरे की बनावट, त्वचा का रंग, आँखें, होंठ, बाल — कोई परिवर्तन नहीं।
+3. OUTFIT & APPEARANCE: [verbatim locked outfit + full appearance — no paraphrase]
+4. LOCATION: [verbatim LOCKED BACKGROUND from clip 1 + freeze line]
+5. ACTION: (STATIC SHOT) [ONE state only. "शरीर बिल्कुल स्थिर रहता है, हाथ नीचे।"]
+6. DIALOGUE: [15–19 words. चरित्र: "(बातचीत के लहजे में...) संवाद"]
+7. AUDIO: [BGM description — same mood/tempo across all clips unless story requires shift]
+8. CAMERA: [Shot type + eye-level + "Ultra-sharp focus, 8k resolution, highly detailed.
+   कैमरा बिल्कुल स्थिर।"]
+9. LIGHTING: [Dual source description. "⚠️ आँखें clearly visible। कोई काले eye socket
+   shadows नहीं। Cinematic contrast, photorealistic skin texture, extremely crisp."]
+10. VISUAL FORMAT PROHIBITIONS: No cinematic letterbox bars. No black bars. Full {ar}
+    frame edge to edge. No burned-in subtitles. No text overlays. No lower thirds.
+    No captions. No watermarks. No on-screen app UI. If showing phone, show dark screen only.
+    Audio-visual sync: match lip movements precisely to spoken dialogue.
+11. LAST FRAME: [exact expression + body + hand position + full background inventory
+    + camera type + lighting — this becomes the next clip's CONTINUING FROM]
+
+════════════════════════════════════════════════════════════
+SELF-CHECK BEFORE OUTPUTTING EACH CLIP
+════════════════════════════════════════════════════════════
+Before writing each clip's JSON, verify:
+□ Word count of DIALOGUE: counted, 15–19 Hindi words?
+□ ACTION block: exactly ONE state? No transitions? No hand movement?
+□ LIGHTING: two sources? Eyes visible? Ghost face prevented?
+□ LOCATION: verbatim copy from clip 1? Freeze line present?
+□ LAST FRAME: complete? Matches what CONTINUING FROM of next clip will need?
+□ Voiceover: zero? All dialogue assigned to on-screen speaker only?
+□ Phone (if shown): black screen instruction present?
+□ FACE LOCK: present? References correct character?
+
+If any check fails — fix before outputting.
+
+════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+════════════════════════════════════════════════════════════
+Valid JSON only. No markdown. No preamble. No explanation after the JSON.
+
 {{
   "clips": [
-    {{"clip": 1, "scene_summary": "...", "last_frame": "...", "prompt": "..."}},
-    ... (exactly {num_clips} items)
+    {{
+      "clip": 1,
+      "scene_summary": "one English sentence describing what happens",
+      "last_frame": "exact last-frame state in Hindi — expression, position, background",
+      "prompt": "full Hindi prompt following the 11-section structure above"
+    }}
   ]
-}}"""
+}}
 
-    # Build the contents list — text first, then any reference images
+Generate exactly {num_clips} clips."""
+
     user_text = (
         f"SUPERLIVING AD SCRIPT:\n{script}"
         f"{char_sheet_injection}"
         f"{extra_section}"
-        f"\n\nGenerate exactly {num_clips} clip prompts as JSON now."
+        f"\n\nNow generate exactly {num_clips} clip prompts as JSON."
     )
 
     contents = [types.Part.from_text(text=user_text)]
-
-    # Append reference images from additional instructions
     if extra_image_parts:
         contents.append(types.Part.from_text(
-            text=f"\n\nREFERENCE IMAGES ({len(extra_image_parts)} provided): "
-                 f"Use these as visual context for setting, mood, style, and aesthetics "
-                 f"when writing the scene prompts. Match the look and feel shown."
+            text=f"\n\nREFERENCE IMAGES ({len(extra_image_parts)}): "
+                 f"Match the visual tone, setting, and mood shown."
         ))
         contents.extend(extra_image_parts)
 
@@ -348,13 +432,13 @@ OUTPUT: valid JSON only:
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=system,
-            temperature=0.4,  # Very low temperature = maximum rule compliance
+            temperature=0.15,  # Lower = stricter rule following, less creative drift
         ),
     )
 
-    # Safely handle None response
     if response is None or response.text is None:
         raise RuntimeError("Gemini returned empty response when building clip prompts")
+
     raw = response.text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -364,8 +448,6 @@ OUTPUT: valid JSON only:
 
     data = json.loads(raw)
     return data["clips"]
-
-
 
 # CONTINUING FROM (Gemini Vision)
 def build_continuing_from(
