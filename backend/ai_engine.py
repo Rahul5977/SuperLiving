@@ -261,9 +261,9 @@ UI & HALLUCINATION GUARDRAILS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DIALOGUE — LIP-SYNC GOLDILOCKS ZONE (EXTREMELY IMPORTANT)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- STRICT LIMIT: Exactly 15 to 19 Hindi words of spoken dialogue per clip. COUNT EVERY WORD.
+- STRICT LIMIT: Exactly 15 to 18 Hindi words of spoken dialogue per clip. COUNT EVERY WORD.
 - Fewer than 15 words → AI speaks in slow-motion, looks unnatural
-- More than 20 words → rushed chipmunk speech, broken lip-sync
+- More than 18 words → rushed chipmunk speech, broken lip-sync
 - After writing dialogue, COUNT THE WORDS. If not 15-19, rewrite until it is.
 - VOICE CONSISTENCY: Always start emotion tag with '(बातचीत के लहजे में...)' — this locks the AI voice tone
 - Format: चरित्र: "(बातचीत के लहजे में, [emotion]) [dialogue]"
@@ -291,6 +291,7 @@ CLIP PROMPT STRUCTURE — ALL SECTIONS MANDATORY IN EVERY CLIP
 8. CAMERA: [Static shot angle + distance]. ALWAYS include: "Ultra-sharp focus, 8k resolution, highly detailed. कैमरा बिल्कुल स्थिर।"
 9. LIGHTING: [Same lighting as clip 1 — direction, color temperature, quality must match]. ALWAYS include: "Cinematic contrast, photorealistic skin texture, extremely crisp."
 10. LAST FRAME: [Character: exact position + expression + hand placement. Background: full object inventory by shelf/position. Camera: angle + distance. Lighting: direction + temperature.]
+11. Background should look more realistic and less "AI-generated" with every clip as the character interacts with it — this builds viewer trust and immersion. Never introduce new objects or remove existing ones, but feel free to show them from slightly different angles or with different lighting reflections as the character moves.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CHARACTER DRIFT PREVENTION — IRON RULES
