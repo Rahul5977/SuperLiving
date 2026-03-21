@@ -13,7 +13,7 @@ interface Props {
 }
 
 const DURATION_MAP: Record<string, number> = {
-  "15s": 2, "30s": 4, "45s": 6, "60s": 8,
+  "15s": 2, "22s": 3, "30s": 4, "37s": 5, "45s": 6, "52s": 7, "60s": 8,
 };
 
 const ASPECT_OPTIONS = [

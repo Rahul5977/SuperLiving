@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import ConfigPanel from "@/components/ConfigPanel";
 import PromptEditor from "@/components/PromptEditor";
@@ -287,6 +287,85 @@ export default function Home() {
     setPhotoAnalyses({});
   };
 
+  /* ─── Download / Upload Prompts ────────────────────────────────────── */
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDownloadPrompts = useCallback(() => {
+    if (clips.length === 0) return;
+    const text = clips
+      .map((c) => `CLIP ${c.clip} — ${c.scene_summary}\n${c.prompt}`)
+      .join("\n\n---\n\n");
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "superliving_prompts.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [clips]);
+
+  const handleUploadFile = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const text = ev.target?.result as string;
+        if (!text) return;
+
+        // Normalize line endings (Windows \r\n → \n)
+        const normalized = text.replace(/\r\n/g, "\n");
+
+        const hasClipHeaders = /^CLIP\s+\d+/im.test(normalized);
+        const hasSeparators = /\n\s*---\s*\n/.test(normalized);
+
+        // ── If file has CLIP headers or --- separators → parse as prompts ──
+        if (hasClipHeaders || hasSeparators) {
+          let blocks: string[];
+
+          if (hasSeparators) {
+            blocks = normalized.split(/\n\s*---\s*\n/).map((b) => b.trim()).filter(Boolean);
+          } else {
+            blocks = normalized.split(/(?=^CLIP\s+\d+)/im).map((b) => b.trim()).filter(Boolean);
+          }
+
+          const parsed: ClipPrompt[] = blocks.map((block, i) => {
+            const headerMatch = block.match(/^CLIP\s+(\d+)\s*[—\-–]\s*(.+)\n([\s\S]*)$/);
+            if (headerMatch) {
+              return {
+                clip: parseInt(headerMatch[1], 10),
+                scene_summary: headerMatch[2].trim(),
+                last_frame: "",
+                prompt: headerMatch[3].trim(),
+              };
+            }
+            return {
+              clip: i + 1,
+              scene_summary: `Clip ${i + 1}`,
+              last_frame: "",
+              prompt: block,
+            };
+          });
+          if (parsed.length > 0) {
+            setClips(parsed);
+            setNumClips(parsed.length);
+            setPhase("review");
+          }
+        }
+        // ── Raw script file → load into script textarea, stay on input phase ──
+        else {
+          setScript(normalized.trim());
+          setPhase("input");
+        }
+      };
+      reader.readAsText(file);
+      // Reset so the same file can be re-uploaded
+      e.target.value = "";
+    },
+    [setClips, setNumClips, setScript]
+  );
+
   /* ─── Render ────────────────────────────────────────────────────────── */
 
   const showJobsPanel = true
@@ -319,7 +398,7 @@ export default function Home() {
             const labels: Record<Phase, string> = {
               input: "Script",
               review: "Edit Prompts",
-              verify: "Claude Review",
+              verify: "Gemini Review",
               result: "Video",
             };
             const phaseOrder: Phase[] = ["input", "review", "verify", "result"];
@@ -371,6 +450,35 @@ export default function Home() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* ── Persistent Download / Upload toolbar ─────────────────────── */}
+        <div className="mb-6 flex items-center gap-3">
+          <button
+            onClick={handleDownloadPrompts}
+            disabled={clips.length === 0}
+            className="rounded-lg border border-white/15 px-4 py-2 text-sm text-white/60 transition hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1.5"
+          >
+            <span>⬇️</span> Download Prompts
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="rounded-lg border border-white/15 px-4 py-2 text-sm text-white/60 transition hover:bg-white/5 hover:text-white flex items-center gap-1.5"
+          >
+            <span>⬆️</span> Upload Script / Prompts
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt"
+            onChange={handleUploadFile}
+            className="hidden"
+          />
+          {clips.length > 0 && (
+            <span className="text-xs text-white/30 ml-1">
+              {clips.length} clip{clips.length !== 1 ? "s" : ""} loaded
+            </span>
+          )}
+        </div>
 
         {/* ── Main layout: content + jobs sidebar ───────────────────────── */}
         <div className={showJobsPanel ? "grid gap-6 lg:grid-cols-6" : ""}>

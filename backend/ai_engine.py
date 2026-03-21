@@ -347,7 +347,7 @@ OUTPUT: valid JSON only:
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=system,
-            temperature=0.15,  # Very low temperature = maximum rule compliance
+            temperature=0.4,  # Very low temperature = maximum rule compliance
         ),
     )
 

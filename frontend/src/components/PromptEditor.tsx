@@ -11,7 +11,7 @@ interface Props {
   setClips: Dispatch<SetStateAction<ClipPrompt[]>>;
   characterSheet: string;
   setCharacterSheet: Dispatch<SetStateAction<string>>;
-  onVerify: () => void;       // ← NEW: opens Claude verify phase
+  onVerify: () => void;       // ← opens Gemini verify phase
   onConfirm: () => void;
   onBack: () => void;
   loading: boolean;
@@ -59,7 +59,7 @@ export default function PromptEditor({
             ✏️ Review &amp; Edit Before Generating
           </h2>
           <p className="mt-1 text-sm text-white/60">
-            Edit dialogue, scenes, lighting. When ready, verify with Claude or generate directly.
+            Edit dialogue, scenes, lighting. When ready, verify with Gemini or generate directly.
           </p>
         </div>
         <button
@@ -70,7 +70,7 @@ export default function PromptEditor({
         </button>
       </div>
 
-      {/* ── Claude Verify Banner ──────────────────────────────────────── */}
+      {/* ── Gemini Verify Banner ──────────────────────────────────────── */}
       <div
         className="rounded-2xl border p-4 flex items-center justify-between gap-4"
         style={{
@@ -79,11 +79,11 @@ export default function PromptEditor({
         }}
       >
         <div className="flex items-center gap-3">
-          <span className="text-2xl">🤖</span>
+          <span className="text-2xl">✨</span>
           <div>
-            <p className="text-sm font-semibold text-indigo-300">Claude Prompt Verification</p>
+            <p className="text-sm font-semibold text-indigo-300">Gemini Emotional Verification</p>
             <p className="text-xs text-white/50">
-              Catches ghost lighting, word count issues, hallucination traps, and weak emotional hooks before Veo generation.
+              Enriches prompts with emotional depth — micro-expressions, body language, and sensory details before Veo generation.
             </p>
           </div>
         </div>
@@ -93,7 +93,7 @@ export default function PromptEditor({
           className="shrink-0 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition-all hover:opacity-90 hover:-translate-y-0.5 disabled:opacity-50 flex items-center gap-1.5"
           style={{ background: "linear-gradient(90deg, #4338ca, #6366f1)" }}
         >
-          🔍 Verify Prompts
+          ✨ Verify Prompts
         </button>
       </div>
 
@@ -176,7 +176,7 @@ export default function PromptEditor({
           className="rounded-xl px-6 py-3 text-sm font-bold text-white transition-all hover:opacity-90 hover:-translate-y-0.5 disabled:opacity-50 flex items-center gap-1.5"
           style={{ background: "linear-gradient(90deg, #4338ca, #6366f1)" }}
         >
-          🤖 Verify with Claude
+          ✨ Verify with Gemini
         </button>
 
         <button

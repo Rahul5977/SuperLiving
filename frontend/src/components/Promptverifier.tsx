@@ -98,11 +98,11 @@ export default function PromptVerifier({ clips, script, onAccept, onSkip, apiBas
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              <span>🤖</span> Claude Prompt Verification
+              <span>✨</span> Gemini Emotional Verification
             </h2>
             <p className="mt-1 text-sm text-white/60">
-              Let Claude audit your prompts before sending to Veo — catches ghost lighting,
-              word count issues, hallucination traps, and weak emotional hooks.
+              Let Gemini enrich your prompts with genuine emotional depth — adds micro-expressions,
+              body language cues, voice tone markers, and sensory details that make ads connect.
             </p>
           </div>
           <button
@@ -127,10 +127,10 @@ export default function PromptVerifier({ clips, script, onAccept, onSkip, apiBas
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                Claude is reviewing {clips.length} clips…
+                Gemini is reviewing {clips.length} clips…
               </>
             ) : (
-              <>🔍 Verify {clips.length} Prompts with Claude</>
+              <>✨ Verify {clips.length} Prompts with Gemini</>
             )}
           </button>
         )}

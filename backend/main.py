@@ -770,8 +770,11 @@ async def serve_video(filename: str):
         raise HTTPException(status_code=404, detail="Video file not found.")
     return FileResponse(path, media_type="video/mp4", filename=filename)
 
-CLAUDE_VERIFY_SYSTEM_PROMPT = """You are a STRICT AI Video Ad Prompt Auditor for SuperLiving — an Indian health & wellness app targeting Tier 3/4 India users aged 18-35.
- 
+
+
+
+GEMINI_VERIFY_SYSTEM_PROMPT="""You are a STRICT AI Video Ad Prompt Auditor for SuperLiving — an Indian health & wellness app targeting Tier 3/4 India users aged 18-35.
+
 Your job: Review each Veo video generation prompt and fix ANY issues. Be ruthless. A bad prompt wastes money and generates ghost-faced horror videos.
  
 ═══════════════════════════════════════════════════════
@@ -779,9 +782,9 @@ RULES YOU MUST ENFORCE (reject or fix anything that violates these)
 ═══════════════════════════════════════════════════════
  
 1. WORD COUNT — GOLDILOCKS ZONE
-   - DIALOGUE must be 17-20 Hindi/Hinglish words. Count every word.
+   - DIALOGUE must be 17-19 Hindi/Hinglish words. Count every word.
    - Under 17 = slow-motion speech. Over 20 = chipmunk rush, lip-sync breaks.
-   - Fix: trim or expand dialogue to hit 17–20 words exactly.
+   - Fix: trim or expand dialogue to hit 17–19 Hindi words exactly.
 
 2. SINGLE ACTION ONLY
    - ACTION block must describe ONE emotional state OR one physical state.
@@ -836,6 +839,20 @@ RULES YOU MUST ENFORCE (reject or fix anything that violates these)
     "⚠️ चेहरा पूरी तरह स्थिर और क्लिप 1 के समान रहेगा — चेहरे की बनावट, त्वचा का रंग, आँखें, होंठ, बाल — कोई परिवर्तन नहीं।"
  
 12. LAST FRAME — must appear in every clip with full background object inventory.
+
+    13. BODY LANGUAGE & MICRO-EXPRESSIONS
+   - Every ACTION block must include at least ONE specific emotional body language cue.
+   - Examples: "fingers tightening around phone", "jaw clenching slightly", "shoulders dropping with relief", "eyes darting away then back", "a slow exhale through pursed lips".
+   - NEVER generic actions like "looks sad" or "smiles". Be SPECIFIC about HOW the emotion shows physically.
+
+14. VOICE & DIALOGUE TONE
+   - Dialogue delivery must have emotional direction: "(voice cracking)", "(whispered)", "(with forced casualness)", "(bitter laugh)", "(quietly, almost to himself)".
+   - Add tone markers if missing. Flat dialogue = dead ad.
+
+15. SENSORY EMOTIONAL DETAILS
+   - Add small sensory details that AMPLIFY the emotional mood of each scene.
+   - Examples: the hum of a ceiling fan in a quiet room, warm yellow light on tired eyes, the glow of a phone screen in darkness reflecting on wet eyes.
+   - These details must serve the EMOTION, not just describe the setting.
  
 ═══════════════════════════════════════════════════════
 OUTPUT FORMAT — respond ONLY with valid JSON, no markdown
@@ -854,68 +871,64 @@ OUTPUT FORMAT — respond ONLY with valid JSON, no markdown
   "summary": "One line: what was wrong overall and what was fixed"
 }
  
-Be specific in issues. Not "voiceover problem" — say "Clip 3 has Rishika voiceover — Veo cannot lip-sync off-screen character. Converted to Rahul quoting Rishika's line in his own dialogue."
+Be specific in issues. Not "voiceover problems". Instead: "Dialogue assigned to off-screen character 'ऋषिका' — violates no voiceover rule. Fixed by making it on-screen character 'राहुल' narrating what ऋषिका said."
 If a prompt is already perfect: status = "approved", issues = [], improved_prompt = original.
 """
- 
- 
- 
 @app.post("/api/verify-prompts", response_model=VerifyPromptsResponse)
 async def verify_prompts(request: VerifyPromptsRequest):
     """
-    Phase 4.5 — Claude Verification Agent.
-    Sends all clip prompts to Claude claude-sonnet-4-20250514 for strict audit.
+    Phase 4.5 — Gemini Verification Agent.
+    Sends all clip prompts to Gemini for emotional enrichment audit.
     Returns per-clip status, issues found, and improved prompts if needed.
     """
-    import anthropic
     import json
- 
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not anthropic_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server.")
- 
+
+    gemini_client, _ = _get_clients()
+
     # Build the user message with all clips
     clips_text = ""
     for clip in request.clips:
         clips_text += f"\n\n{'='*60}\nCLIP {clip.clip} — {clip.scene_summary}\n{'='*60}\n{clip.prompt}"
- 
+
     user_message = f"""Please audit these {len(request.clips)} clip prompts for a SuperLiving ad video.
- 
+
 ORIGINAL SCRIPT CONTEXT:
 {request.script if request.script else "Not provided"}
- 
+
 CLIP PROMPTS TO AUDIT:
 {clips_text}
- 
+
 Check every rule strictly. Return JSON only."""
- 
+
     try:
-        client = anthropic.Anthropic(api_key=anthropic_key)
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=16000,
-            system=CLAUDE_VERIFY_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}]
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash-preview-05-20",
+            contents=user_message,
+            config=types.GenerateContentConfig(
+                system_instruction=GEMINI_VERIFY_SYSTEM_PROMPT,
+                temperature=0.4,
+                max_output_tokens=16000,
+            ),
         )
- 
-        raw = message.content[0].text.strip()
+
+        raw = response.text.strip()
         # Strip markdown fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
         raw = raw.strip()
- 
+
         data = json.loads(raw)
- 
+
         return VerifyPromptsResponse(
             clips=[ClipVerification(**c) for c in data["clips"]],
             overall_score=data.get("overall_score", 0),
             summary=data.get("summary", ""),
         )
- 
+
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Claude returned invalid JSON: {e}")
+        raise HTTPException(status_code=500, detail=f"Gemini returned invalid JSON: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Verification failed: {e}")
  
