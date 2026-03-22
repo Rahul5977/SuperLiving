@@ -161,10 +161,8 @@ def build_clip_prompts(
     ratio_map = {
         "9:16 (Reels / Shorts)": "9:16 vertical portrait",
         "16:9 (YouTube / Landscape)": "16:9 horizontal landscape",
-        "1:1 (Square)": "1:1 square",
         "9:16": "9:16 vertical portrait",
         "16:9": "16:9 horizontal landscape",
-        "1:1": "1:1 square",
     }
     ar = ratio_map.get(aspect_ratio, "9:16 vertical portrait")
     extra_section = f"\nPRODUCTION NOTES: {extra_prompt}" if extra_prompt.strip() else ""

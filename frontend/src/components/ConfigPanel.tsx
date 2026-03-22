@@ -19,7 +19,6 @@ const DURATION_MAP: Record<string, number> = {
 const ASPECT_OPTIONS = [
   "9:16 (Reels / Shorts)",
   "16:9 (YouTube / Landscape)",
-  "1:1 (Square)",
 ];
 
 const VEO_MODELS = [

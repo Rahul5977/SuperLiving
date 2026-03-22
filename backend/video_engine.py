@@ -450,7 +450,7 @@ def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: s
     ffmpeg_bin = _get_ffmpeg()
 
     # ── Shared encode parameters (must be identical for both segments) ────────
-    _res_map = {"16:9": (1920, 1080), "1:1": (1080, 1080)}
+    _res_map = {"16:9": (1920, 1080)}
     TARGET_W, TARGET_H = _res_map.get(aspect_ratio, (1080, 1920))
     TARGET_FPS  = 24
     TARGET_AR   = 44100   # audio sample rate

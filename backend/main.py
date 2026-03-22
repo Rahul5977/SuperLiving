@@ -938,7 +938,7 @@ g) CAMERA MOVEMENT
 RULE 10 — FORMAT PROHIBITIONS PRESENT
 ════════════════════════════════════════════════════════════
 Every clip must contain:
-"No cinematic letterbox bars. No black bars.(1:1 or 9:16 both fine)
+"No cinematic letterbox bars. No black bars.(9:16 OR 16:9 aspect ratio only). No vignetting. No film grain. No blur. No distortion.
 No burned-in subtitles. No text overlays. No lower thirds. No captions. No watermarks.
 No on-screen app UI. If showing phone, show dark screen only.
 Audio-visual sync: match lip movements precisely to spoken dialogue."
@@ -956,6 +956,9 @@ FLAG if:
 - Dialogue has motivational-poster language ("विश्वास करो, सब ठीक होगा")
 - Clip 1 hook does not establish an immediately relatable specific problem
 - Rishika's lines sound like a coach, not a friend
+
+RULE12: DIAGLOGUE CONTINUITY AND NATURALNESS
+    The dialogue across clips must feel like a continuous conversation. Each line should logically follow from the previous one, maintaining the same characters and emotional tone. Avoid any abrupt changes in topic or style that would break the flow of the conversation.
  
 The best dialogue sounds like someone telling their friend exactly what happened.
 VERBATIM real user phrases are better than polished scripted lines.
