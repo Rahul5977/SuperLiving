@@ -133,7 +133,7 @@ def build_director_prompts(client, script: str, characters_json: dict, num_clips
     # Build system prompt
     system = f"""You are an expert AI video director creating prompts for Google Veo 3.1.
 
-TASK: Split the given SuperLiving ad script into exactly {num_clips} sequential 8-second clip prompts.
+TASK: Split the given SuperLiving ad script into exactly {num_clips} sequential 7–8 second clip prompts.
 ALL CLIP PROMPTS MUST BE WRITTEN IN DEVANAGARI HINDI.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -161,7 +161,7 @@ The person watching this ad on their phone must be engaged within 2 seconds or t
 - Emotional arc: problem → recognition → curiosity → solution → confidence
 
 THE "RULE OF ONE ACTION" & CAMERA GEOMETRY (CRITICAL FOR VEO):
-- ACTION ISOLATION: Never overload an 8-second clip.
+- ACTION ISOLATION: Never overload a 7–8 second clip.
   If a character changes emotion, body MUST remain still: "शरीर बिल्कुल स्थिर रहता है, हाथ नीचे ही रहेंगे"
 - CAMERA LOCK: "(STATIC SHOT) / कैमरा बिल्कुल स्थिर रहता है" — no zoom/pan during character movement
 - LOCATION LOCK — BACKGROUND FREEZE (MOST CRITICAL ANTI-HALLUCINATION RULE):
@@ -196,7 +196,7 @@ CLIP PROMPT STRUCTURE — ALL SECTIONS MANDATORY IN EVERY CLIP
 3. OUTFIT & APPEARANCE: [Full locked outfit + full locked appearance — verbatim, zero shortcuts]
 4. LOCATION: [Verbatim LOCKED BACKGROUND + freeze line — identical every clip]
 5. ACTION: [ONE emotion OR one physical action — never both simultaneously]
-6. DIALOGUE: [15-19 Hindi words. COUNT THEM. Format: चरित्र: "(बातचीत के लहजे में...) संवाद"]
+6. DIALOGUE: [16-18 Hindi words. COUNT THEM. EVERY word VERBATIM from script — no skipping. Format: चरित्र: "(बातचीत के लहजे में...) संवाद"]
 7. AUDIO: [Same BGM mood/tempo throughout — never change music style]
 8. CAMERA: [Static angle + distance]. Include: "Ultra-sharp focus, 8k resolution, highly detailed. कैमरा बिल्कुल स्थिर।"
 9. LIGHTING: [Identical to clip 1 — direction, temperature, quality]. Include: "Cinematic contrast, photorealistic skin texture, extremely crisp."

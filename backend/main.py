@@ -270,11 +270,12 @@ def _run_generate_video_core(
                     )
                     time.sleep(wait)
                     continue
-                # Non-retryable — fall back to text-only
+                # Content/safety block — rephrase BEFORE text-only fallback
                 logger.warning(
-                    f"⚠️ {clip_label} failed (attempt {attempt}): "
-                    f"{err_str[:120]} — falling back to text-only"
+                    f"⚠️ {clip_label} blocked (attempt {attempt}): "
+                    f"{err_str[:120]} — rephrasing and falling back to text-only"
                 )
+                current_prompt = rephrase_blocked_prompt(gemini_client, current_prompt, attempt)
                 operation = generate_clip_text_only(
                     video_client, veo_model, current_prompt,
                     aspect_ratio, i + 1, num_clips,
@@ -782,32 +783,56 @@ A bad prompt = ghost face, drifting character, background objects appearing/disa
 broken lip-sync, or a video that looks obviously AI-generated and fake.
  
 ════════════════════════════════════════════════════════════
-RULE 1 — DIALOGUE WORD COUNT (15–19 HINDI WORDS EXACTLY)
+RULE 1 — DIALOGUE WORD COUNT (16–18 HINDI WORDS EXACTLY)
 ════════════════════════════════════════════════════════════
 Count every word in the dialogue. Include quoted words inside the dialogue.
- 
-Under 15 → slow-motion speech, awkward silence between words
-Over 19 → chipmunk rush, lip movements don't match
-Exactly 15–19 → perfect 8-second sync
- 
+
+Under 16 → slow-motion speech, awkward silence, unnatural gaps between words
+Over 18 → chipmunk rush, words get SKIPPED, lip movements don't match
+Exactly 16–18 → perfect 7–8 second sync, every word spoken clearly
+
 FIX: Trim or expand. Keep the emotional core. Do not change speaker or tone.
-Count again after fixing — confirm 15–19.
+Count again after fixing — confirm 16–18.
+
+⚠️ VERBATIM CHECK — EVERY WORD MUST BE SPOKEN:
+After fixing word count, verify that NO words from the original script dialogue
+have been removed or replaced. Product names (serum, retinol, niacinamide),
+numbers (teen hazaar, aath hazaar), and specific details are the PUNCH of the ad.
+If any word is missing compared to the script dialogue, FLAG and restore it.
+The 16–18 word range guarantees Veo has time to articulate every word.
  
 ════════════════════════════════════════════════════════════
-RULE 2 — SINGLE ACTION ONLY (ZERO TOLERANCE FOR TRANSITIONS)
+RULE 2 — ONE EMOTION + NATURAL MICRO-MOVEMENT + SETTLE-TO-REST
 ════════════════════════════════════════════════════════════
-Each clip = one static state. NOT a sequence. NOT a transition.
- 
+Each clip = ONE emotional state + 1–2 subtle micro-movements + SETTLE to rest.
+Real people are never frozen statues — they move subtly while talking.
+But EMOTIONAL TRANSITIONS are still forbidden (no sad→happy in one clip).
+
 FLAG and FIX any of these patterns in ACTION block:
-✗ "expression changes from X to Y" → show only the FINAL state
-✗ "looks down at phone, then back at camera" → remove the look-down
-✗ "slowly smiles / gradually becomes confident" → just "चेहरे पर मुस्कान है"
-✗ "raises hand into frame" → hands must be visible from clip start or out of frame entirely
-✗ Multiple verbs: "takes a breath, looks up, and smiles" → pick ONE
+✗ "expression changes from X to Y" → emotional transition = split into 2 clips
+✗ "looks down at phone, then back at camera" → 2 actions, remove the look-down
+✗ "slowly smiles / gradually becomes confident" → transition, just show final state
+✗ "raises hand into frame" → hands must be OUT OF FRAME (TIGHT MCU enforces this)
+✗ Multiple emotion verbs: "takes a breath, looks up, and smiles" → pick ONE emotion
 ✗ "eyes light up as he realizes" → transition language → remove
- 
+✗ Large head turns (>15 degrees), standing up/sitting down mid-clip
+✗ Continuous repetitive motion (nodding throughout, swaying)
+
+ALSO FLAG — FROZEN STATUE (too still = looks AI-generated):
+✗ "शरीर बिल्कुल स्थिर रहता है" alone with zero movement described
+✗ No micro-movement at all in ACTION block → character will look robotic
+FIX: Add 1–2 allowed micro-movements from this list:
+  ✓ Slight head tilt (small arc), eyebrow raise/furrow, small nod/headshake,
+    subtle forward lean and return, slight weight shift, shoulder relaxation
+
 CORRECT ACTION format:
-(STATIC SHOT) चेहरे पर [ONE EXPRESSION]. शरीर बिल्कुल स्थिर रहता है, हाथ नीचे ही रहेंगे।
+चेहरे पर [ONE EXPRESSION]। बोलते हुए [1–2 micro-movements from allowed list]।
+⚠️ आखिरी 1–2 सेकंड: चरित्र REST POSITION में स्थिर हो जाता है —
+सीधे कैमरे की ओर देखते हुए, तटस्थ मुद्रा, हाथ फ्रेम से बाहर।
+यह LAST FRAME, अगले क्लिप का FIRST FRAME बनेगा।
+
+FLAG: SETTLE-TO-REST instruction missing from ACTION block.
+FIX: Add the "⚠️ आखिरी 1–2 सेकंड: REST POSITION..." line at the end of ACTION.
  
 ════════════════════════════════════════════════════════════
 RULE 3 — LIGHTING: GHOST FACE PREVENTION
@@ -869,21 +894,28 @@ FLAG: If CONTINUING FROM mentions a DIFFERENT location than the LOCKED BACKGROUN
 FIX: Replace with verbatim clip 1 LOCATION.
  
 ════════════════════════════════════════════════════════════
-RULE 7 — CONTINUING FROM AND LAST FRAME
+RULE 7 — CONTINUING FROM, LAST FRAME, AND REST POSITION
 ════════════════════════════════════════════════════════════
 Every clip except clip 1 MUST have a CONTINUING FROM block.
 Every clip MUST have a LAST FRAME block.
- 
+
 CONTINUING FROM must include:
-  - Character: exact expression, exact hand position, body position
+  - Character: exact expression, exact hand position (out of frame), body position
+  - REST STATE: is the character settled/still? Head angle, shoulder level, gaze direction
   - Background: full object inventory (every item, every shelf, positions)
-  - Camera: shot type
+  - Camera: shot type (TIGHT MCU)
   - Lighting: direction and color temperature
- 
-LAST FRAME must use identical format — it becomes the next clip's CONTINUING FROM.
- 
+
+LAST FRAME must describe the character in REST POSITION:
+  - Character must be STILL — no mid-movement (no mid-head-tilt, no mid-nod)
+  - Neutral settled posture, looking directly at camera
+  - Hands out of frame
+  - This becomes the next clip's CONTINUING FROM — any movement here causes drift
+
 FLAG: Missing CONTINUING FROM (clips 2+)
 FLAG: Missing LAST FRAME (any clip)
+FLAG: LAST FRAME describes character mid-movement (e.g., "head tilted to right")
+  FIX: Change to settled neutral position — "सीधे कैमरे की ओर देखते हुए, तटस्थ मुद्रा"
 FLAG: CONTINUING FROM says "previous character not here" without explaining the new scene
 FIX for new scene: "यह एक नया, स्वतंत्र दृश्य है। पिछले क्लिप के चरित्र और
 पृष्ठभूमि यहाँ नहीं हैं।" + full new scene description
@@ -903,34 +935,45 @@ FIX: Write a new Face Lock for the new character referencing only their appearan
 RULE 9 — REALISM CHECKS (WHAT MAKES IT LOOK REAL)
 ════════════════════════════════════════════════════════════
 FLAG any of these realism-breaking patterns and fix:
- 
+
 a) OVER-THEATRICAL EXPRESSIONS
    ✗ "चौड़ी, बड़ी, खुश मुस्कान" → ✓ "हल्की, सच्ची मुस्कान"
    ✗ "आँखें चमक उठती हैं" → ✓ "आँखों में हल्की चमक है"
    Real humans show subtle micro-expressions. Big theatrical expressions = AI-looking.
- 
-b) LIGHTING DESCRIPTION CONTRADICTIONS
+
+b) FROZEN STATUE — NO MOVEMENT AT ALL (NEW — CRITICAL)
+   ✗ ACTION block describes ONLY a static state with zero physical movement
+   ✗ "शरीर बिल्कुल स्थिर रहता है" as the ENTIRE action description
+   ✗ Character is described as perfectly still throughout 7–8 seconds of talking
+   WHY: A person talking for 7–8 seconds without ANY head movement, weight shift,
+   or eyebrow change looks AI-generated. Real UGC has subtle natural motion.
+   FIX: Add 1–2 micro-movements (slight head tilt, eyebrow raise, small nod,
+   subtle lean, weight shift) PLUS the SETTLE-TO-REST instruction at the end.
+   The character should move naturally during first 6 seconds, then settle
+   to a still REST POSITION in the last 1–2 seconds for clean clip stitching.
+
+c) LIGHTING DESCRIPTION CONTRADICTIONS
    ✗ "tubelight is now less harsh because of his confidence"
    Light does not change based on emotion. Remove emotional qualifiers from lighting.
    ✓ Keep: fixed light source description. Remove: subjective feel language.
- 
-c) DOUBLE COLON IN SECTION HEADERS
+
+d) DOUBLE COLON IN SECTION HEADERS
    ✗ CONTINUING FROM:: → ✓ CONTINUING FROM:
- 
-d) SKIN TEXTURE MISSING
+
+e) SKIN TEXTURE MISSING
    Every LIGHTING block should include: "photorealistic skin texture" or
    "extremely crisp" — this forces Veo to render real pores and natural skin.
- 
-e) OUTFIT BLOCK MISSING PHYSICAL APPEARANCE
+
+f) OUTFIT BLOCK MISSING PHYSICAL APPEARANCE
    OUTFIT & APPEARANCE must contain BOTH outfit AND physical description.
    If only outfit is listed — flag and request full appearance block.
- 
-f) BACKGROUND IS NOT IN FOCUS
+
+g) BACKGROUND IS NOT IN FOCUS
    "पृष्ठभूमि पूरी तरह से फोकस में है" — this is a mistake. Background should be
    SLIGHTLY out of focus to separate character from environment (natural depth of field).
    FIX: Remove "पूरी तरह से फोकस में" or replace with "हल्की natural depth of field"
- 
-g) CAMERA MOVEMENT
+
+h) CAMERA MOVEMENT
    Any pan, zoom, tilt, track = removes UGC/realistic feel.
    ✗ "camera slowly zooms in" → ✓ (STATIC SHOT), कैमरा बिल्कुल स्थिर
  
@@ -957,8 +1000,22 @@ FLAG if:
 - Clip 1 hook does not establish an immediately relatable specific problem
 - Rishika's lines sound like a coach, not a friend
 
-RULE12: DIAGLOGUE CONTINUITY AND NATURALNESS
+RULE 12 — DIALOGUE CONTINUITY AND NATURALNESS
     The dialogue across clips must feel like a continuous conversation. Each line should logically follow from the previous one, maintaining the same characters and emotional tone. Avoid any abrupt changes in topic or style that would break the flow of the conversation.
+
+RULE 12b — PRODUCT NAMES IN DIALOGUE (DO NOT STRIP)
+    When a character LISTS product names she used to use or wasted money on
+    (e.g., "Serum, retinol, niacinamide, sab lagati thi"), these words MUST
+    stay in the dialogue. They are the PROBLEM STATEMENT, not a recommendation.
+
+    FLAG if: product names have been replaced with vague generic terms
+    (e.g., "sab products lagati thi" instead of naming specific products)
+    WHY: The specificity ("retinol, niacinamide") is what makes the dialogue
+    relatable and punchy. Removing them makes it boring and generic.
+    The character must SPEAK these words — they are critical for engagement.
+
+    DO NOT FLAG: product names used in complaint/past-tense/negative context.
+    ONLY FLAG: product names used as active recommendations or promotions.
 
 ════════════════════════════════════════════════════════════
 RULE 13 — NO DASHES IN DIALOGUE (NEW — CRITICAL FOR SPEECH RHYTHM)
@@ -1030,8 +1087,8 @@ Rules for issues list:
 - Empty array [] if status is "approved"
 - Be specific: not "lighting problem" but "bottom-up phone screen as only light source
   will cause ghost face — added warm side-fill from right as primary, phone glow as secondary accent"
-- Not "word count issue" but "Clip 2 dialogue is 23 words — trimmed to 18 by removing
-  'और मुझे बहुत बुरा लगा' which was redundant"
+- Not "word count issue" but "Clip 2 dialogue is 23 words — trimmed to 17 by removing
+  'और मुझे बहुत बुरा लगा' which was redundant. All original script words preserved."
  
 Rules for improved_prompt:
 - Must be the COMPLETE prompt with ALL sections, not just the changed parts

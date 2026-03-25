@@ -414,7 +414,7 @@ anchors must still be present in every prompt to reinforce consistency throughou
 
     system = f"""You are an expert AI video director creating prompts for Google Veo 3.1.
 
-TASK: Split the given SuperLiving ad script into exactly {num_clips} sequential 8-second clip prompts.
+TASK: Split the given SuperLiving ad script into exactly {num_clips} sequential 7–8 second clip prompts.
 ALL CLIP PROMPTS MUST BE WRITTEN IN DEVANAGARI HINDI.
 
 {char_consistency_rule}
@@ -430,10 +430,11 @@ UI & HALLUCINATION GUARDRAILS:
 - THE PHONE SCREEN TRAP: Veo cannot render a second human face inside a phone screen. If a phone is shown, you MUST state: "फोन की स्क्रीन काली है" (The phone screen is black). NEVER describe an app UI or a video call.
 
 DIALOGUE LENGTH — THE LIP-SYNC 'GOLDILOCKS ZONE':
-- STRICT LIMIT: Exactly 15 to 19 Hindi words of spoken dialogue per clip. 
-- Less than 15 words causes the AI to speak in slow-motion.
-- More than 20 words causes rushed, chipmunk-speed speech and breaks lip-sync.
-- Balance the script perfectly to hit 15-19 words per 8-second clip. Split long sentences across clips seamlessly.
+- STRICT LIMIT: Exactly 16 to 18 Hindi words of spoken dialogue per clip.
+- Less than 16 words causes the AI to speak in slow-motion with unnatural gaps.
+- More than 18 words causes rushed speech, words get SKIPPED, and breaks lip-sync.
+- Balance the script perfectly to hit 16-18 words per 7-8 second clip. Split long sentences across clips seamlessly.
+- VERBATIM: The AI character MUST speak EVERY word. No skipping product names or details.
 - Format: चरित्र: "संवाद"
 
 CONTINUITY RULES:
@@ -445,7 +446,7 @@ CLIP PROMPT STRUCTURE:
 2. OUTFIT & APPEARANCE: [Locked, verbatim]
 3. LOCATION: [Locked, no panning]
 4. ACTION: [Emotion + strictly isolated body movement]
-5. DIALOGUE: [Strictly 15-19 words]
+5. DIALOGUE: [Strictly 16-18 words, EVERY word spoken verbatim]
 6. AUDIO: [BGM consistent]
 7. CAMERA: [Use (STATIC SHOT) frequently]
 8. LIGHTING: [Consistent]

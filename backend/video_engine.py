@@ -416,7 +416,7 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
         return False
         
 def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: str,
-                               pause_sec: float = 0.0, aspect_ratio: str = "9:16") -> bool:
+                               pause_sec: float = 0.4, aspect_ratio: str = "9:16") -> bool:
     """
     Append *cta_path* after *base_vid_path* (with optional pause),
     then write the result to *output_path*.
@@ -475,49 +475,107 @@ def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: s
         return True
 
     def _re_encode_with_fadeout(src: str, dst: str, label: str, fade_duration: float = 0.5) -> bool:
-        """Re-encode src with a fade-out at the end before CTA (FAST)."""
-        r_probe = subprocess.run([ffmpeg_bin, "-i", src], capture_output=True, text=True)
+        """
+        Re-encode base video with:
+          1. blackdetect → trim trailing black (fixes the 10-15s gap before CTA)
+          2. fade-out on the last `fade_duration` seconds of real content
+        """
         import re as _re2
-        m = _re2.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", r_probe.stderr)
-        if not m:
-            return _re_encode(src, dst, label)  # fallback — no fadeout
-        total = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-        fade_start = max(0.0, total - fade_duration)
-        r = subprocess.run(
-            [ffmpeg_bin, "-y", "-i", src,
-             "-vf", (f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,"
-                     f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,"
-                     f"fps={TARGET_FPS},format=yuv420p,"
-                     f"fade=t=out:st={fade_start:.4f}:d={fade_duration}"),
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-             "-pix_fmt", "yuv420p",
-             "-video_track_timescale", "12800",
-             "-af", (f"afade=t=out:st={fade_start:.4f}:d={fade_duration},"
-                     f"aresample={TARGET_AR},apad"),
-             "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "128k",
-             "-shortest", dst],
-            capture_output=True, text=True,
-        )
-        if r.returncode != 0:
-            logger.warning(f"Fadeout encode failed for {label}, falling back")
+
+        # ── probe total duration ────────────────────────────────────────
+        r_probe = subprocess.run([ffmpeg_bin, "-i", src], capture_output=True, text=True)
+        m_dur = _re2.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", r_probe.stderr)
+        if not m_dur:
             return _re_encode(src, dst, label)
+        total = int(m_dur.group(1)) * 3600 + int(m_dur.group(2)) * 60 + float(m_dur.group(3))
+
+        # ── blackdetect: find trailing black ────────────────────────────
+        detect_cmd = [
+            ffmpeg_bin, "-i", src,
+            "-vf", "blackdetect=d=0.08:pix_th=0.10",
+            "-an", "-f", "null", "-",
+        ]
+        r_det = subprocess.run(detect_cmd, capture_output=True, text=True)
+
+        content_end = total
+        for m in _re2.finditer(
+            r"black_start:\s*([\d.]+)\s*black_end:\s*([\d.]+)", r_det.stderr
+        ):
+            bs, be = float(m.group(1)), float(m.group(2))
+            # trailing black = extends to within 0.3s of EOF
+            if be >= total - 0.3 and bs < total - 0.5:
+                content_end = bs
+                break
+
+        if content_end < total - 0.5:
+            logger.info(f"  ✂️ {label}: trimming trailing black — "
+                        f"content ends at {content_end:.2f}s (file is {total:.2f}s)")
+
+        # ── re-encode: trim to content_end + scale + fade ───────────────
+        fade_start = max(0.0, content_end - fade_duration)
+        vf = (
+            f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,"
+            f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,"
+            f"fps={TARGET_FPS},format=yuv420p,"
+            f"fade=t=out:st={fade_start:.4f}:d={fade_duration}"
+        )
+        cmd = [
+            ffmpeg_bin, "-y", "-i", src,
+            "-t", f"{content_end:.4f}",
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-video_track_timescale", "12800",
+            "-af", f"afade=t=out:st={fade_start:.4f}:d={fade_duration},aresample={TARGET_AR}",
+            "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "192k",
+            dst,
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            logger.warning(f"Fadeout+trim failed for {label}, falling back to plain re-encode")
+            return _re_encode(src, dst, label)
+        sz = os.path.getsize(dst) // 1024
+        logger.info(f"  ✅ Normalised {label} (trimmed to {content_end:.1f}s + fadeout): {sz} KB")
         return True
 
     def _re_encode_cta(src: str, dst: str, label: str) -> bool:
         """
-        Re-encode CTA (FAST) — skip expensive blackdetect trimming.
-        
-        The blackdetect was adding 5-7 seconds of overhead for marginal benefit.
-        Just encode directly with veryfast preset.
+        Re-encode CTA with blackdetect — trims leading black frames that
+        cause the visible gap before CTA content starts.
         """
+        import re as _re3
+
+        # ── detect leading black ────────────────────────────────────────
+        detect_cmd = [
+            ffmpeg_bin, "-i", src,
+            "-vf", "blackdetect=d=0.08:pix_th=0.10",
+            "-an", "-f", "null", "-",
+        ]
+        r_det = subprocess.run(detect_cmd, capture_output=True, text=True)
+
+        trim_start = 0.0
+        for m in _re3.finditer(
+            r"black_start:\s*([\d.]+)\s*black_end:\s*([\d.]+)", r_det.stderr
+        ):
+            bs, be = float(m.group(1)), float(m.group(2))
+            if bs < 0.05:  # leading black (starts at ~0)
+                trim_start = be
+                break
+
+        if trim_start > 0:
+            logger.info(f"  ✂️ {label}: trimming {trim_start:.2f}s leading black")
+
+        # ── re-encode with -ss to skip leading black ────────────────────
         cmd = [
-            ffmpeg_bin, "-y", "-i", src,
+            ffmpeg_bin, "-y",
+            "-ss", f"{trim_start:.4f}",
+            "-i", src,
             "-vf", (f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,"
                     f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,"
                     f"format=yuv420p,fps={TARGET_FPS}"),
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
             "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "128k",
+            "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "192k",
             "-video_track_timescale", "12800",
             "-movflags", "+faststart",
             dst,
