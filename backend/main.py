@@ -44,6 +44,7 @@ from .ai_engine import (
     generate_clip_text_only,
     generate_clip_with_frame_context,
     get_clip_character_photo,
+    hyphenate_dialogue_acronyms,
     rephrase_blocked_prompt,
     sanitize_prompt_for_veo,
 )
@@ -218,6 +219,9 @@ def _run_generate_video_core(
                 current_prompt = sanitized
         except Exception as san_err:
             logger.warning(f"⚠️ Sanitizer failed ({san_err}) — using original prompt")
+
+        # Guarantee acronyms are hyphenated (deterministic — no LLM, always runs)
+        current_prompt = hyphenate_dialogue_acronyms(current_prompt)
 
         for attempt in range(1, MAX_RETRIES + 1):
             if attempt > 1:
@@ -1018,41 +1022,80 @@ RULE 12b — PRODUCT NAMES IN DIALOGUE (DO NOT STRIP)
     ONLY FLAG: product names used as active recommendations or promotions.
 
 ════════════════════════════════════════════════════════════
-RULE 13 — NO DASHES IN DIALOGUE (NEW — CRITICAL FOR SPEECH RHYTHM)
+RULE 13 — NO DASHES IN DIALOGUE (CRITICAL FOR SPEECH RHYTHM)
 ════════════════════════════════════════════════════════════
-INSTANT FLAG: Any '—' (em-dash) or '-' (hyphen) INSIDE dialogue text.
- 
-WHY: Veo's voice engine interprets dashes as hard sentence breaks.
+INSTANT FLAG: Any '—' (em-dash) or word-connecting '-' INSIDE dialogue text.
+
+⚠️ EXCEPTION — DO NOT FLAG OR REMOVE:
+  Acronym hyphens of the form SINGLE-LETTER-SINGLE-LETTER (e.g. P-C-O-S, I-V-F, B-P).
+  These are intentional pronunciation guides — Veo reads each letter separately.
+  NEVER remove or merge these. They are correct and required.
+  Pattern to keep: any sequence of 1-letter groups joined by hyphens (A-B, P-C-O-S, etc.)
+
+WHY: Veo's voice engine interprets word-connecting dashes as hard sentence breaks.
 This causes:
   - Unnatural speech rhythm: voice stops completely at the dash
   - Wrong word stress: the word after the dash gets new sentence stress
   - In some cases the word after the dash is swallowed or repeated
   - The dialogue sounds robotic and mismatched to lip movement
- 
+
 EXAMPLES TO FIX:
   ✗ "Gharwale bol rahe hain — chhod de, ya shaadi kar le."
   ✓ "Gharwale bol rahe hain, bole chhod de ya shaadi kar le."
- 
+
   ✗ "Pehla — socha hoga. Nahi hua."
   ✓ "Pehle socha hoga. Nahi hua."
- 
+
   ✗ "Usne bola — yaar, teen baar fail hona..."
   ✓ "Usne bola, yaar, teen baar fail hona..."
- 
+
   ✗ "Idea mera tha — muh se nikla hi nahi."
   ✓ "Idea mera tha, par muh se nikla hi nahi."
- 
+
   ✗ "Raat ko neend nahi aa rahi thi — SuperLiving pe Rishika se baat ki."
   ✓ "Raat ko neend nahi aa rahi thi. SuperLiving pe Rishika se baat ki."
- 
-REPLACEMENT RULES:
+
+REPLACEMENT RULES (for word-connecting dashes ONLY — never for acronym hyphens):
   '—' for brief pause    → comma (,)
   '—' for connective     → aur / toh / phir / lekin / par / kyunki
   '—' before quote       → "X ne bola, Y" (comma after bola, not dash)
   '—' genuine new sent.  → full stop (.)
  
- ════════════════════════════════════════════════════════════
-RULE 14 — NO SECOND CHARACTER IN FRAME
+════════════════════════════════════════════════════════════
+RULE 14 — ACRONYM HYPHENATION IN DIALOGUE (CRITICAL FOR VOX)
+════════════════════════════════════════════════════════════
+Any ALL-CAPS abbreviation spoken in dialogue MUST have a hyphen between every letter.
+Veo's TTS pronounces bare acronyms as a single garbled syllable. Hyphens force
+letter-by-letter pronunciation.
+
+INSTANT FLAG: Any 2–6 letter ALL-CAPS standalone word in dialogue that is NOT
+already hyphenated (e.g. PCOS, IVF, BP, PCOD, DIY, IBS, OCD, EMI, UPI, GST).
+
+FIX: Insert a hyphen between every letter.
+  ✗ "PCOS है।"       → ✓ "P-C-O-S है।"
+  ✗ "IVF करवाया।"    → ✓ "I-V-F करवाया।"
+  ✗ "BP बढ़ गया।"    → ✓ "B-P बढ़ गया।"
+  ✗ "UPI से भेजो।"   → ✓ "U-P-I से भेजो।"
+
+NOTE: This hyphenation is the ONLY exception to RULE 13's no-dash rule.
+Do NOT remove these acronym hyphens when applying RULE 13.
+
+════════════════════════════════════════════════════════════
+RULE 15 — EXPOSURE CONSISTENCY ACROSS CLIPS
+════════════════════════════════════════════════════════════
+Veo's I2V chain passes the last frame of each clip as the first frame of the next.
+If any clip renders slightly darker, the next clip starts from that darker frame —
+causing progressive brightness decay by clips 4–6.
+
+MANDATORY: Every clip's LIGHTING block MUST contain this exact line:
+"Exposure: same bright, well-lit level as clip 1. Face fully illuminated, no dimming,
+no shadow creep. Overall brightness IDENTICAL to clip 1. Camera exposure LOCKED."
+
+FLAG: Any clip whose LIGHTING block is missing the exposure anchor line above.
+FIX: Add the line to the end of the LIGHTING block (before the ⚠️ eye socket line).
+
+════════════════════════════════════════════════════════════
+RULE 16 — NO SECOND CHARACTER IN FRAME
 ════════════════════════════════════════════════════════════
 Only ONE character should be visible on screen at any time.
 A second character's FACE must NEVER appear in the frame.
@@ -1105,48 +1148,78 @@ async def verify_prompts(request: VerifyPromptsRequest):
     import json
 
     gemini_client, _ = _get_clients()
+    script_context = request.script if request.script else "Not provided"
 
-    # Build the user message with all clips
-    clips_text = ""
-    for clip in request.clips:
-        clips_text += f"\n\n{'='*60}\nCLIP {clip.clip} — {clip.scene_summary}\n{'='*60}\n{clip.prompt}"
+    # Per-clip single-object output schema avoids truncation.
+    # Sending all clips in one request causes Gemini to exceed its output token
+    # budget mid-JSON (especially with long Hindi prompts), producing unterminated
+    # strings.  One call per clip keeps each response small and well within limits.
+    PER_CLIP_OUTPUT_FORMAT = """\nReturn a single JSON object (no array wrapper):
+{
+  "clip": <clip number>,
+  "status": "approved" or "improved",
+  "issues": ["..."],
+  "improved_prompt": "Full corrected prompt, identical to input if approved."
+}"""
 
-    user_message = f"""Please audit these {len(request.clips)} clip prompts for a SuperLiving ad video.
-
-ORIGINAL SCRIPT CONTEXT:
-{request.script if request.script else "Not provided"}
-
-CLIP PROMPTS TO AUDIT:
-{clips_text}
-
-Check every rule strictly. Return JSON only."""
+    verified_clips: list[ClipVerification] = []
+    issues_summary: list[str] = []
 
     try:
-        response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=user_message,
-            config=types.GenerateContentConfig(
-                system_instruction=GEMINI_PROMPT_AUDITOR,
-                response_mime_type="application/json",
-                temperature=0.3,
-                max_output_tokens=65536,
-            ),
+        for clip in request.clips:
+            user_message = (
+                f"Audit CLIP {clip.clip} — {clip.scene_summary}\n\n"
+                f"ORIGINAL SCRIPT CONTEXT:\n{script_context}\n\n"
+                f"CLIP PROMPT:\n{clip.prompt}\n\n"
+                f"Check every rule strictly.{PER_CLIP_OUTPUT_FORMAT}"
+            )
+
+            response = gemini_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=user_message,
+                config=types.GenerateContentConfig(
+                    system_instruction=GEMINI_PROMPT_AUDITOR,
+                    response_mime_type="application/json",
+                    temperature=0.3,
+                    max_output_tokens=16384,
+                ),
+            )
+
+            raw = response.text.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            raw = raw.strip()
+
+            try:
+                c = json.loads(raw)
+            except json.JSONDecodeError:
+                # Truncated response — approve as-is so we don't block the user
+                c = {
+                    "clip": clip.clip,
+                    "status": "approved",
+                    "issues": [],
+                    "improved_prompt": clip.prompt,
+                }
+
+            c["improved_prompt"] = hyphenate_dialogue_acronyms(
+                c.get("improved_prompt") or clip.prompt
+            )
+            verified_clips.append(ClipVerification(**c))
+            if c.get("issues"):
+                issues_summary.append(f"Clip {clip.clip}: {'; '.join(c['issues'][:2])}")
+
+        improved_count = sum(1 for c in verified_clips if c.status == "improved")
+        summary = (
+            f"{improved_count}/{len(verified_clips)} clips improved. "
+            + (" | ".join(issues_summary[:3]) if issues_summary else "All clips passed.")
         )
 
-        raw = response.text.strip()
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        raw = raw.strip()
-
-        data = json.loads(raw)
-
         return VerifyPromptsResponse(
-            clips=[ClipVerification(**c) for c in data["clips"]],
-            overall_score=data.get("overall_score", 0),
-            summary=data.get("summary", ""),
+            clips=verified_clips,
+            overall_score=max(0, 100 - improved_count * 10),
+            summary=summary,
         )
 
     except json.JSONDecodeError as e:

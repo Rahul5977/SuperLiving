@@ -229,6 +229,17 @@ MANDATORY DUAL-SOURCE LIGHTING in every clip:
            This fills eye sockets and makes the face human and readable.
   SECONDARY: Ambient overhead or background glow — very low intensity.
 
+⚠️ EXPOSURE LOCK — BRIGHTNESS MUST NOT DECAY ACROSS CLIPS:
+The I2V chain passes the last frame of each clip as the first frame of the next.
+If a clip renders slightly darker, the next clip inherits that darkness and goes
+even darker — causing progressive brightness degradation by clip 4–6.
+
+MANDATORY: In EVERY clip's LIGHTING block, copy this EXACT exposure anchor line:
+"Exposure: same bright, well-lit level as clip 1. Face fully illuminated, no dimming,
+no shadow creep. Overall brightness IDENTICAL to clip 1. Camera exposure LOCKED."
+
+This explicitly tells Veo NOT to reduce exposure when using the I2V input frame.
+
 Always end the LIGHTING block with:
 "⚠️ आँखें और माथा CLEARLY VISIBLE हैं। कोई काले eye socket shadows नहीं।
 Cinematic contrast, photorealistic skin texture, extremely crisp."
@@ -355,6 +366,22 @@ unnaturally. When too high (>18), Veo rushes and SKIPS words — especially
 technical/English words like product names. 16–18 is the sweet spot where
 every word gets spoken clearly without rush.
 
+⚠️ ACRONYM SPELLING RULE — MANDATORY:
+Any acronym or abbreviation in dialogue MUST have a hyphen between every letter.
+This is the ONLY way Veo pronounces each letter individually instead of mashing
+them into a single garbled syllable.
+
+EXAMPLES (always apply this — no exceptions):
+  ✓ "P-C-O-S" (NOT "PCOS")
+  ✓ "I-V-F" (NOT "IVF")
+  ✓ "B-P" (NOT "BP")
+  ✓ "D-I-Y" (NOT "DIY")
+  ✓ "SuperLiving" → keep as one word (not an acronym)
+
+Rule: scan every dialogue line. If you see a 2–6 letter ALL-CAPS word, insert
+hyphens between every letter. Do this for medical terms, brand acronyms, government
+scheme names — anything that is spelled out letter by letter when spoken aloud.
+
 FORBIDDEN dialogue patterns:
 ✗ Voiceover: NEVER assign dialogue to a character not visible in frame.
   "ऋषिका (वॉयसओवर):" → Veo has no face to sync to → silence or random mouth movement.
@@ -464,11 +491,12 @@ SELF-CHECK BEFORE OUTPUTTING EACH CLIP
 ════════════════════════════════════════════════════════════
 Before writing each clip's JSON, verify:
 □ Word count of DIALOGUE: counted, 16–18 Hindi words? EVERY word from script present — none skipped?
+□ ACRONYMS: every ALL-CAPS abbreviation has hyphens between letters? (PCOS→P-C-O-S, IVF→I-V-F, etc.)
 □ ACTION block: ONE emotional state? 1–2 micro-movements only? No hand gestures?
 □ SETTLE-TO-REST: does ACTION end with "आखिरी 1–2 सेकंड: REST POSITION" instruction?
 □ MICRO-MOVEMENTS: only from allowed list (head tilt, eyebrow, nod, lean, weight shift)?
 □ CAMERA: TIGHT MCU (chin to mid-chest)? Hands physically out of frame?
-□ LIGHTING: two sources? Eyes visible? Ghost face prevented?
+□ LIGHTING: two sources? Eyes visible? Ghost face prevented? EXPOSURE LOCK line present?
 □ LOCATION: verbatim copy from clip 1? Freeze line present?
 □ LAST FRAME: character in REST POSITION (still, neutral)? Background inventory complete?
 □ Voiceover: zero? All dialogue assigned to on-screen speaker only?
@@ -921,6 +949,58 @@ ABSOLUTE RULES:
         lines = sanitized.split("\n")
         sanitized = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
     return sanitized.strip() if sanitized else prompt
+
+
+def hyphenate_dialogue_acronyms(prompt: str) -> str:
+    """
+    Deterministically hyphenate ALL-CAPS acronyms (2–6 chars) inside the DIALOGUE
+    section of a Veo prompt — guaranteed, no LLM involved.
+
+    Why this works: Veo's TTS pronounces "PCOS" as a single mumbled syllable but
+    pronounces "P-C-O-S" as four distinct letters.  LLM instructions are unreliable
+    (Gemini may not follow them, and the sanitizer may strip the hyphenated form).
+    This function runs AFTER every LLM call, so the final text Veo receives is always
+    correct regardless of what the LLMs produced.
+
+    Handles both prompt formats:
+      • JSON-style:  "DIALOGUE": "...PCOS..."
+      • Plain-text:  DIALOGUE:\n...PCOS...
+    """
+    import re as _re
+
+    _ACRONYM = _re.compile(r'\b([A-Z]{2,6})\b')
+
+    def _hyphenate(text: str) -> str:
+        return _ACRONYM.sub(lambda m: '-'.join(m.group(1)), text)
+
+    # ── JSON-format prompt ("DIALOGUE": "...") ───────────────────────────────
+    _JSON_DIALOGUE = _re.compile(
+        r'("DIALOGUE"\s*:\s*")((?:[^"\\]|\\.)*?)(")',
+        _re.IGNORECASE,
+    )
+    if _JSON_DIALOGUE.search(prompt):
+        return _JSON_DIALOGUE.sub(
+            lambda m: m.group(1) + _hyphenate(m.group(2)) + m.group(3),
+            prompt,
+        )
+
+    # ── Plain-text format (DIALOGUE:\n...) ───────────────────────────────────
+    lines = prompt.split('\n')
+    in_dialogue = False
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if _re.match(r'^DIALOGUE\s*:', stripped, _re.IGNORECASE):
+            in_dialogue = True
+            result.append(line)
+            continue
+        # Any new ALL-CAPS-ish section header ends the DIALOGUE block
+        if in_dialogue and _re.match(r'^[A-Z][A-Z\s&_()\-]{1,40}:', stripped):
+            in_dialogue = False
+        if in_dialogue:
+            line = _hyphenate(line)
+        result.append(line)
+    return '\n'.join(result)
 
 
 def rephrase_blocked_prompt(client, original_prompt: str, attempt: int) -> str:

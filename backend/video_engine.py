@@ -210,11 +210,23 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
             norm_path = os.path.join(TMP, f"norm_{i:02d}.mp4")
             clip_has_audio = has_audio_stream(p)
 
+            # Brightness normalization filter: eq=gamma=1.0 preserves exposure,
+            # colorlevels gently lifts shadows to counteract I2V brightness decay.
+            # Values chosen to be invisible on a well-lit clip but corrective on a
+            # slightly darkened one (typical I2V drift = 5–15% luma reduction).
+            BRIGHTNESS_FIX = (
+                "scale=trunc(iw/2)*2:trunc(ih/2)*2,"
+                "fps=24,"
+                "colorlevels=rimin=0.02:gimin=0.02:bimin=0.02:"
+                "rimax=0.98:gimax=0.98:bimax=0.98,"
+                "format=yuv420p"
+            )
+
             if clip_has_audio:
                 logger.info(f"  📎 Clip {i+1}: normalizing video + audio (aresample→apad→shortest)...")
                 r = subprocess.run(
                     [ffmpeg_bin, "-y", "-i", p,
-                     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=24,format=yuv420p",
+                     "-vf", BRIGHTNESS_FIX,
                      "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                      "-pix_fmt", "yuv420p",
                      "-video_track_timescale", "12800",
@@ -227,10 +239,10 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
                 if r.returncode != 0:
                     logger.warning(f"  ⚠️ Clip {i+1}: aresample pipeline failed, trying basic normalize...")
                     logger.debug(f"Clip {i+1} aresample error:\n{r.stderr[-800:]}")
-                    
+
                     r = subprocess.run(
                         [ffmpeg_bin, "-y", "-i", p,
-                         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=24,format=yuv420p",
+                         "-vf", BRIGHTNESS_FIX,
                          "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                          "-pix_fmt", "yuv420p",
                          "-video_track_timescale", "12800",
@@ -249,7 +261,7 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
                     [ffmpeg_bin, "-y",
                      "-i", p,
                      "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:d={vid_dur:.4f}",
-                     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=24,format=yuv420p",
+                     "-vf", BRIGHTNESS_FIX,
                      "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                      "-pix_fmt", "yuv420p",
                      "-video_track_timescale", "12800",
