@@ -167,6 +167,10 @@ def build_clip_prompts(
     }
     ar = ratio_map.get(aspect_ratio, "9:16 vertical portrait")
     extra_section = f"\nPRODUCTION NOTES: {extra_prompt}" if extra_prompt.strip() else ""
+    language_note_line = (
+        "\nNOTE: The original script may contain English or Hinglish — "
+        "translate ALL spoken dialogue to Devanagari Hindi regardless."
+    ) if language_note else ""
 
     # ── Character consistency block ───────────────────────────────────────────
     if has_photos and photo_analyses:
@@ -392,6 +396,25 @@ FORBIDDEN dialogue patterns:
 
 FORMAT: चरित्र: "(बातचीत के लहजे में, [emotion]) संवाद"
 Always start the bracket with "(बातचीत के लहजे में..." — this stabilises Veo's voice engine.
+
+⚠️ DIALOGUE LANGUAGE — DEVANAGARI HINDI ONLY (ABSOLUTE RULE):
+Every single word of spoken dialogue MUST be written in Devanagari script (हिंदी).
+This applies even when the original ad script is in English or Hinglish.
+
+TRANSLATE everything to Devanagari Hindi:
+  ✗ "Maine SuperLiving pe Coach Seema se baat ki."   ← Roman/Hinglish — FORBIDDEN
+  ✗ "I tried everything but nothing worked."          ← English — FORBIDDEN
+  ✓ "मैंने सुपरलिविंग पे कोच सीमा से बात की।"      ← Devanagari Hindi — CORRECT
+
+Brand names and product names that have no Hindi equivalent keep their spelling
+but must still be embedded inside a Devanagari sentence:
+  ✓ "SuperLiving पे कोच सीमा मिली।"
+  ✓ "P-C-O-S है, डॉक्टर ने बोला।"
+
+WHY THIS MATTERS: Veo 3.1 reads the dialogue text as a TTS script.
+Roman/English text inside a Devanagari prompt causes the character to either
+speak with a heavy accent, mispronounce words, or go silent entirely.
+Pure Devanagari = natural Hindi speech with correct lip-sync.{language_note_line}
 
 ════════════════════════════════════════════════════════════
 CONTINUITY RULES

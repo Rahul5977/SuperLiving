@@ -1007,6 +1007,14 @@ FLAG if:
 RULE 12 — DIALOGUE CONTINUITY AND NATURALNESS
     The dialogue across clips must feel like a continuous conversation. Each line should logically follow from the previous one, maintaining the same characters and emotional tone. Avoid any abrupt changes in topic or style that would break the flow of the conversation.
 
+RULE 12a — DIALOGUE LANGUAGE: DEVANAGARI HINDI ONLY
+Every word of spoken dialogue MUST be in Devanagari script.
+FLAG: Any Roman/English words inside the dialogue text (not inside bracket stage directions).
+FIX: Translate to Devanagari Hindi. Keep brand names (SuperLiving, Coach Seema) as-is
+but embed them inside a Devanagari sentence.
+  ✗ "Maine SuperLiving pe Seema se baat ki." → ✓ "मैंने SuperLiving पे सीमा से बात की।"
+  ✗ "PCOS hai, doctor ne bola."              → ✓ "P-C-O-S है, डॉक्टर ने बोला।"
+
 RULE 12b — PRODUCT NAMES IN DIALOGUE (DO NOT STRIP)
     When a character LISTS product names she used to use or wasted money on
     (e.g., "Serum, retinol, niacinamide, sab lagati thi"), these words MUST
@@ -1185,27 +1193,42 @@ async def verify_prompts(request: VerifyPromptsRequest):
                 ),
             )
 
-            raw = response.text.strip()
+            raw = (response.text or "").strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
                     raw = raw[4:]
             raw = raw.strip()
 
+            # Parse — tolerate any malformed / truncated output
+            parsed: dict = {}
             try:
-                c = json.loads(raw)
-            except json.JSONDecodeError:
-                # Truncated response — approve as-is so we don't block the user
-                c = {
-                    "clip": clip.clip,
-                    "status": "approved",
-                    "issues": [],
-                    "improved_prompt": clip.prompt,
-                }
+                parsed = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                pass
 
-            c["improved_prompt"] = hyphenate_dialogue_acronyms(
-                c.get("improved_prompt") or clip.prompt
-            )
+            # Unwrap {"clips": [...]} if Gemini ignored the single-object instruction
+            if isinstance(parsed, list):
+                parsed = parsed[0] if parsed else {}
+            elif "clips" in parsed and isinstance(parsed["clips"], list) and parsed["clips"]:
+                parsed = parsed["clips"][0]
+
+            # Extract only the 4 fields ClipVerification expects — ignore all extras.
+            # Coerce types so Pydantic never sees an unexpected value.
+            issues_raw = parsed.get("issues", [])
+            if isinstance(issues_raw, str):
+                issues_raw = [issues_raw] if issues_raw else []
+            elif not isinstance(issues_raw, list):
+                issues_raw = []
+
+            c = {
+                "clip": int(parsed.get("clip") or clip.clip),
+                "status": str(parsed.get("status") or "approved"),
+                "issues": [str(i) for i in issues_raw],
+                "improved_prompt": hyphenate_dialogue_acronyms(
+                    str(parsed.get("improved_prompt") or "") or clip.prompt
+                ),
+            }
             verified_clips.append(ClipVerification(**c))
             if c.get("issues"):
                 issues_summary.append(f"Clip {clip.clip}: {'; '.join(c['issues'][:2])}")

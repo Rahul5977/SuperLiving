@@ -75,7 +75,20 @@ export function useJobPoller({
       const poll = async () => {
         try {
           const res = await fetch(`${apiBase}/api/job-status/${jobId}`);
-          if (!res.ok) return;
+          if (!res.ok) {
+            // 404 = backend restarted and lost this job — stop polling and mark as error
+            if (res.status === 404) {
+              stopPolling(jobId);
+              setJobs((prev) =>
+                prev.map((j) =>
+                  j.id === jobId
+                    ? { ...j, status: "error", step: "Lost (server restarted)", error: "Job not found" }
+                    : j
+                )
+              );
+            }
+            return;
+          }
           const data = await res.json();
 
           const status = mapStatus(data.status, data.message ?? "");
