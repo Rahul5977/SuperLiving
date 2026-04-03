@@ -492,6 +492,45 @@ FIX: Add "कैमरे की तरफ मुँह करके" to the ACT
 turn description with subtle head tilt (≤15°) while still facing the lens.
 
 ════════════════════════════════════════════════════════════
+RULE 18 — CLIP 1 HOOK MUST BE A SPECIFIC SCENE
+════════════════════════════════════════════════════════════
+Check clip 1 DIALOGUE only.
+
+FLAG if clip 1 dialogue opens with a general emotion or state:
+  ✗ "Mujhe bahut thakaan rehti thi" (general state)
+  ✗ "Main pareshan tha" (general emotion)
+  ✗ "Meri skin kharab thi" (general problem)
+
+PASS if clip 1 dialogue contains a specific scene with time/place/person:
+  ✓ Named time: "raat 11 baje", "subah 6 baje", "3 baje", "teen mahine se"
+  ✓ Named situation: "video call pe", "gym mein", "kitchen mein", "office mein"
+  ✓ Named person: "boss ne bola", "bhabhi ne poocha", "trainer ne dekha"
+
+FIX: If flagged, rewrite ONLY the DIALOGUE line of clip 1.
+Add a specific time/place/person to make it a scene, not an emotion.
+Keep all other sections of clip 1 identical.
+
+════════════════════════════════════════════════════════════
+RULE 19 — LAST CLIP PAYOFF MUST SHOW, NOT TELL
+════════════════════════════════════════════════════════════
+Check the LAST clip DIALOGUE only.
+
+FLAG if last clip dialogue uses abstract feeling language:
+  ✗ "ab mujhe accha feel hota hai"
+  ✗ "energy wapas aa gayi"
+  ✗ "sab theek ho gaya"
+  ✗ "main khush hoon"
+
+PASS if last clip dialogue contains:
+  ✓ A named person who noticed: "bhabhi ne bola", "boss ne notice kiya", "dost ne poocha"
+  ✓ A specific behaviour change that echoes clip 1's scene
+  ✓ A concrete social proof moment
+
+FIX: If flagged, rewrite ONLY the DIALOGUE line of the last clip.
+Replace the abstract feeling with a named person's observation or a
+behaviour that directly echoes clip 1. Keep all other sections identical.
+
+════════════════════════════════════════════════════════════
 OUTPUT FORMAT — valid JSON only, no markdown, no explanation
 ════════════════════════════════════════════════════════════
 Return a SINGLE JSON object (no array wrapper, no "clips" key):
@@ -679,12 +718,24 @@ def imagen_character_prompt(physical_baseline: str, outfit: str) -> str:
     return (
         f"Hyper-realistic smartphone photo of an everyday Indian person. "
         f"{physical_baseline}. Wearing {outfit}. "
-        f"About 70% of the body is visible (head to knees), centered in frame. "
-        f"Casual indoor setting, lived-in and not staged. "
-        f"Shot on an ordinary smartphone: uneven exposure, slight grain, natural daylight. "
-        f"Ultra-realistic natural skin texture, visible pores, no airbrushing. "
-        f"No cinematic lighting, no dramatic shadows, completely unretouched. "
-        f"Looks like a real person recording a high-trust UGC video at home."
+        f"Tight medium close-up shot, chin to mid-chest, eye-level, camera absolutely still. "
+        f"Background: a lived-in Indian home — slightly worn walls, a simple wooden almirah "
+        f"or bookshelf visible, ordinary tube-light or single window casting natural light. "
+        f"NOT a modern Mumbai flat. NOT a studio. A small-city Indian home, slightly imperfect. "
+        f"Shot on an ordinary mid-range Android smartphone: slight overexposure on one side, "
+        f"no ring light, no softbox, no studio lighting setup, natural slightly uneven exposure. "
+        f"Ultra-realistic skin texture with visible pores, natural skin tone for their stated "
+        f"background, no airbrushing, no beauty mode, no skin smoothing filter. "
+        f"Expression: direct, slightly self-conscious eye contact with the camera lens — like "
+        f"someone about to say something personal to a close friend, not performing for an audience. "
+        f"Slight tension in the jaw or eyes suggesting they are about to share something real. "
+        f"NOT smiling for a photo. NOT posing. Just present and honest. "
+        f"Clothing looks lived-in, not brand new. Hair naturally styled, not salon-done. "
+        f"Looks authentically like their stated occupation and life stage — "
+        f"a housewife looks like she has been home all day, "
+        f"an office worker looks like they just finished a long shift, "
+        f"a student looks like they haven't slept enough. "
+        f"Completely unretouched. Looks like a real person recording a UGC video at home."
     )
 
 
@@ -1043,6 +1094,76 @@ Use this exact section order:
     The character must be STILL in this frame — no mid-movement. This becomes the next clip's CONTINUING FROM.]
 
 ════════════════════════════════════════════════════════════
+HOOK RULE — CLIP 1 DECIDES CPI (READ THIS FIRST)
+════════════════════════════════════════════════════════════
+The viewer decides whether to scroll within 2 seconds.
+They scroll UNLESS they see their own life in the first line.
+
+CLIP 1 DIALOGUE MUST contain a SPECIFIC PHYSICAL SCENE — not an emotion.
+
+SCENE = time + place + person + action. All four together.
+
+✅ SCENE HOOKS (pass):
+  "Raat 11 baje roti bana rahi thi — aaj kisi ne nahi poocha main ne khaaya ki nahi"
+  "Video call pe boss bol raha tha, aur main apna chehra dekh raha tha"
+  "Teen mahine se camera band rakha tha — bola nahi tha, net slow hai, light nahi hai"
+  "Gym mein 6 mahine ho gaye, body nahi bani — trainer ne photo kheenchi thi"
+
+❌ EMOTION HOOKS (fail — will get scrolled):
+  "Mujhe apni skin ki bahut chinta rehti hai"
+  "Main bahut thaka rehta tha roz roz"
+  "Mujhe bahut dard hota tha"
+  "Main akela feel karta tha"
+
+SELF-CHECK FOR CLIP 1:
+□ Does clip 1 dialogue name a specific TIME (raat 11, subah 6, 3 baje)?
+□ Does it name a specific PLACE or SITUATION (video call, gym, kitchen, office)?
+□ Does it name a specific PERSON (boss, bhabhi, pati, trainer, saas)?
+□ Could a Tier 2–3 Indian viewer say "yeh toh exactly meri hi zindagi hai"?
+If ANY of these is NO → rewrite clip 1 dialogue before continuing.
+
+════════════════════════════════════════════════════════════
+SOLUTION TIMING RULE — COACH MUST APPEAR BY CLIP 3
+════════════════════════════════════════════════════════════
+Viewers who haven't seen the solution by the midpoint have already scrolled.
+
+MANDATORY STRUCTURE:
+- Clip 1: Problem hook (specific scene)
+- Clip 2: Depth of problem (isolation / failed attempts / social shame)
+- Clip 3: TURN — SuperLiving / coach introduced HERE. Not clip 4. Not clip 5.
+- Clip 4+: Coach's insight + payoff
+
+If the script has problem running into clip 4 → compress clip 2 and clip 3 problem.
+Cut one problem clip. Move the coach entry earlier. No exceptions.
+
+════════════════════════════════════════════════════════════
+PAYOFF RULE — LAST CLIP MUST SHOW, NOT TELL
+════════════════════════════════════════════════════════════
+BANNED payoff lines (tell, not show):
+  ❌ "Ab mujhe accha feel hota hai"
+  ❌ "Energy wapas aa gayi"
+  ❌ "Main bahut better hoon ab"
+  ❌ "Sab theek ho gaya"
+
+REQUIRED payoff (show, not tell) — one of these three:
+  □ A NAMED PERSON who noticed the change:
+    "Bhabhi ne khud bola, kuch alag dikh rahi ho"
+    "Boss ne poocha, aaj kuch alag ho kya"
+    "Chacha bola, bhai kaafi confident lag raha tha"
+  □ A SPECIFIC BEHAVIOUR that changed (echoes hook):
+    Hook opened with hiding heating pad → "Heating pad khullam khulla rakhti hoon"
+    Hook opened with camera off → "Aaj khud camera on karta hoon, boss se pehle"
+  □ HOOK ECHO — last line echoes first line transformed:
+    Clip 1: "Raat 11 baje roti bana rahi thi"
+    Last clip: "Raat 11 baje chai bana ke baith ke peeti hoon, sirf apne liye"
+
+SELF-CHECK FOR LAST CLIP:
+□ Does it name a real person who noticed?
+□ Does it show a behaviour change, not a feeling change?
+□ Does it echo something specific from clip 1?
+If all three NO → rewrite the last clip.
+
+════════════════════════════════════════════════════════════
 SELF-CHECK BEFORE OUTPUTTING EACH CLIP
 ════════════════════════════════════════════════════════════
 Before writing each clip's JSON, verify:
@@ -1277,6 +1398,76 @@ Use this exact section order:
 11. LAST FRAME: [character in REST POSITION — exact expression (settled, neutral) + body position
     + hand position (out of frame) + full background inventory + camera type + lighting.
     Character must be STILL — no mid-movement. This becomes the next clip's CONTINUING FROM.]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HOOK RULE — CLIP 1 DECIDES CPI (READ THIS FIRST)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The viewer decides whether to scroll within 2 seconds.
+They scroll UNLESS they see their own life in the first line.
+
+CLIP 1 DIALOGUE MUST contain a SPECIFIC PHYSICAL SCENE — not an emotion.
+
+SCENE = time + place + person + action. All four together.
+
+✅ SCENE HOOKS (pass):
+  "Raat 11 baje roti bana rahi thi — aaj kisi ne nahi poocha main ne khaaya ki nahi"
+  "Video call pe boss bol raha tha, aur main apna chehra dekh raha tha"
+  "Teen mahine se camera band rakha tha — bola nahi tha, net slow hai, light nahi hai"
+  "Gym mein 6 mahine ho gaye, body nahi bani — trainer ne photo kheenchi thi"
+
+❌ EMOTION HOOKS (fail — will get scrolled):
+  "Mujhe apni skin ki bahut chinta rehti hai"
+  "Main bahut thaka rehta tha roz roz"
+  "Mujhe bahut dard hota tha"
+  "Main akela feel karta tha"
+
+SELF-CHECK FOR CLIP 1:
+□ Does clip 1 dialogue name a specific TIME (raat 11, subah 6, 3 baje)?
+□ Does it name a specific PLACE or SITUATION (video call, gym, kitchen, office)?
+□ Does it name a specific PERSON (boss, bhabhi, pati, trainer, saas)?
+□ Could a Tier 2–3 Indian viewer say "yeh toh exactly meri hi zindagi hai"?
+If ANY of these is NO → rewrite clip 1 dialogue before continuing.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SOLUTION TIMING RULE — COACH MUST APPEAR BY CLIP 3
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Viewers who haven't seen the solution by the midpoint have already scrolled.
+
+MANDATORY STRUCTURE:
+- Clip 1: Problem hook (specific scene)
+- Clip 2: Depth of problem (isolation / failed attempts / social shame)
+- Clip 3: TURN — SuperLiving / coach introduced HERE. Not clip 4. Not clip 5.
+- Clip 4+: Coach's insight + payoff
+
+If the script has problem running into clip 4 → compress clip 2 and clip 3 problem.
+Cut one problem clip. Move the coach entry earlier. No exceptions.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PAYOFF RULE — LAST CLIP MUST SHOW, NOT TELL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BANNED payoff lines (tell, not show):
+  ❌ "Ab mujhe accha feel hota hai"
+  ❌ "Energy wapas aa gayi"
+  ❌ "Main bahut better hoon ab"
+  ❌ "Sab theek ho gaya"
+
+REQUIRED payoff (show, not tell) — one of these three:
+  □ A NAMED PERSON who noticed the change:
+    "Bhabhi ne khud bola, kuch alag dikh rahi ho"
+    "Boss ne poocha, aaj kuch alag ho kya"
+    "Chacha bola, bhai kaafi confident lag raha tha"
+  □ A SPECIFIC BEHAVIOUR that changed (echoes hook):
+    Hook opened with hiding heating pad → "Heating pad khullam khulla rakhti hoon"
+    Hook opened with camera off → "Aaj khud camera on karta hoon, boss se pehle"
+  □ HOOK ECHO — last line echoes first line transformed:
+    Clip 1: "Raat 11 baje roti bana rahi thi"
+    Last clip: "Raat 11 baje chai bana ke baith ke peeti hoon, sirf apne liye"
+
+SELF-CHECK FOR LAST CLIP:
+□ Does it name a real person who noticed?
+□ Does it show a behaviour change, not a feeling change?
+□ Does it echo something specific from clip 1?
+If all three NO → rewrite the last clip.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SELF-CHECK BEFORE OUTPUTTING EACH CLIP
