@@ -59,11 +59,36 @@ class AnalyzeCharactersResponse(BaseModel):
 class AnalyseScriptRequest(BaseModel):
     script: str = Field(..., min_length=1)
     num_clips: int = Field(default=6, ge=1, le=8)
+    provider: str = "gemini"   # "gemini" | "anthropic"
 
 
 class AnalyseScriptResponse(BaseModel):
     production_brief: str = ""
     improved_script: str = ""
+
+
+# ── POST /api/score-script ────────────────────────────────────────────────────
+
+class ScoreScriptRequest(BaseModel):
+    script: str = Field(..., min_length=1)
+    provider: str = "anthropic"   # "anthropic" | "gemini"
+
+
+class ScriptIssue(BaseModel):
+    rule: int
+    severity: str
+    description: str
+    original_line: str = ""
+    fixed_line: str = ""
+
+
+class ScoreScriptResponse(BaseModel):
+    score: int
+    issues: list[ScriptIssue]
+    improved_script: str
+    hook_type: str = ""
+    tier2_score: int = 0
+    tier2_notes: str = ""
 
 
 # ── POST /api/generate-prompts ───────────────────────────────────────────────
@@ -78,6 +103,9 @@ class GeneratePromptsRequest(BaseModel):
     language_note: bool = True
     has_photos: bool = False
     production_brief: str = ""  # pre-computed by /api/analyse-script
+    # Model routing — override defaults in ai_router.py
+    clip_build_provider: str = "gemini"      # "gemini" | "anthropic"
+    character_sheet_provider: str = "gemini" # "gemini" | "anthropic"
 
 
 class GeneratePromptsResponse(BaseModel):
@@ -154,6 +182,7 @@ class AgenticPipelineResponse(BaseModel):
 class VerifyPromptsRequest(BaseModel):
     clips: list[ClipPrompt]
     script: str = ""
+    provider: str = "anthropic"   # "anthropic" | "gemini"
  
  
 class ClipVerification(BaseModel):

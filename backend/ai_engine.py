@@ -86,13 +86,27 @@ def analyze_character_photo(client, name: str, photo_bytes: bytes, mime_type: st
         return {"appearance": raw, "outfit": ""}
 
 
-def build_character_sheet(client, script: str) -> str:
+def build_character_sheet(client, script: str, provider: str = None) -> str:
     """Used only when no reference photos are provided."""
+    from .ai_router import generate_text
+    CHARACTER_SHEET_SYSTEM = (
+        "You are a character consistency director for SuperLiving video ads. "
+        "Given an ad script, extract each character and write a locked character sheet "
+        "with physical appearance (face, hair, age, build — NOT clothing) and outfit. "
+        "Format as plain text sections per character. Be specific and concrete."
+    )
+    if provider is not None:
+        return generate_text(
+            task="character_sheet",
+            system_prompt=CHARACTER_SHEET_SYSTEM,
+            user_message=f"AD SCRIPT:\n{script}",
+            provider=provider,
+        )
+    # Default: Gemini with direct client call (preserves existing behavior)
     response = client.models.generate_content(
         model="gemini-2.5-pro",
         contents=build_character_sheet_prompt(script),
     )
-    # Safely handle None response
     if response is None or response.text is None:
         return "Character sheet generation failed — please describe characters manually."
     return response.text.strip()
@@ -125,7 +139,7 @@ def get_clip_character_photo(clip_prompt: str, char_photos_raw: list) -> tuple:
 # PROMPT GENERATION
 
 
-def analyse_script_for_production(client, script: str, num_clips: int) -> tuple[str, str]:
+def analyse_script_for_production(client, script: str, num_clips: int, provider: str = None) -> tuple[str, str]:
     """
     Step 0 — Script Dialogue Analyst + Rewriter.
     Runs BEFORE build_clip_prompts().
@@ -245,19 +259,31 @@ IMPROVED SCRIPT
 [Full rewritten script with ALL fixes applied. Keep the same clip structure.
 Format each clip as: CLIP N\n[character]: "[dialogue]"]"""
 
-    response = client.models.generate_content(
-        model="gemini-2.5-pro",
-        contents=f"Analyse and rewrite this SuperLiving ad script:\n\n{script}",
-        config=types.GenerateContentConfig(
-            system_instruction=system,
+    if provider is not None:
+        from .ai_router import generate_text
+        raw = generate_text(
+            task="script_analysis",
+            system_prompt=system,
+            user_message=f"Analyse and rewrite this SuperLiving ad script:\n\n{script}",
+            provider=provider,
             temperature=0.3,
-        ),
-    )
+            max_tokens=8192,
+        )
+    else:
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=f"Analyse and rewrite this SuperLiving ad script:\n\n{script}",
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                temperature=0.3,
+            ),
+        )
+        if response is None or response.text is None:
+            return "", script  # Fail gracefully — return empty brief, original script
+        raw = response.text.strip()
 
-    if response is None or response.text is None:
-        return "", script  # Fail gracefully — return empty brief, original script
-
-    raw = response.text.strip()
+    if not raw:
+        return "", script
 
     # Split on the IMPROVED SCRIPT delimiter
     delimiter = "IMPROVED SCRIPT\n==============="
@@ -285,6 +311,7 @@ def build_clip_prompts(
     language_note: bool,
     has_photos: bool = False,
     production_brief: str = "",
+    provider: str = None,
 ) -> list:
     ratio_map = {
         "9:16 (Reels / Shorts)": "9:16 vertical portrait",
@@ -352,19 +379,31 @@ Clips 2+ use the last frame of the previous clip as I2V — text still anchors i
         ))
         contents.extend(extra_image_parts)
 
-    response = client.models.generate_content(
-        model="gemini-2.5-pro",
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            temperature=0.15,  # Lower = stricter rule following, less creative drift
-        ),
-    )
+    if provider is not None:
+        # Route through ai_router (Anthropic or Gemini)
+        from .ai_router import generate_text
+        # Flatten contents to text only (image parts not supported via router)
+        raw = generate_text(
+            task="clip_prompt_build",
+            system_prompt=system,
+            user_message=user_text,
+            provider=provider,
+            temperature=0.15,
+        )
+    else:
+        # Default: Gemini with image parts support
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                temperature=0.15,
+            ),
+        )
+        if response is None or response.text is None:
+            raise RuntimeError("Gemini returned empty response when building clip prompts")
+        raw = response.text.strip()
 
-    if response is None or response.text is None:
-        raise RuntimeError("Gemini returned empty response when building clip prompts")
-
-    raw = response.text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -672,12 +711,23 @@ def download_video(uri: str, api_key: str) -> bytes:
 # PROMPT SANITIZATION
 
 
-def sanitize_prompt_for_veo(client, prompt: str, clip_num: int) -> str:
+def sanitize_prompt_for_veo(client, prompt: str, clip_num: int, provider: str = None) -> str:
     """
-    Run every prompt through Gemini BEFORE sending to Veo.
+    Run every prompt through Gemini (or Claude) BEFORE sending to Veo.
     Strips anything that triggers Veo's content policy silently.
     """
     system = SANITIZE_VEO_SYSTEM
+
+    if provider is not None:
+        from .ai_router import generate_text
+        sanitized = generate_text(
+            task="sanitization",
+            system_prompt=system,
+            user_message=f"Sanitize this Veo prompt for clip {clip_num}:\n\n{prompt}",
+            provider=provider,
+            temperature=0.3,
+        )
+        return sanitized if sanitized else prompt
 
     response = client.models.generate_content(
         model="gemini-2.5-pro",

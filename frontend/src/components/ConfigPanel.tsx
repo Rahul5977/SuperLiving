@@ -1,6 +1,6 @@
 "use client";
 
-import { Dispatch, SetStateAction } from "react";
+import { Dispatch, SetStateAction, useState } from "react";
 
 interface Props {
   script: string;              setScript: Dispatch<SetStateAction<string>>;
@@ -10,6 +10,10 @@ interface Props {
   aspectRatio: string;         setAspectRatio: Dispatch<SetStateAction<string>>;
   veoModel: string;            setVeoModel: Dispatch<SetStateAction<string>>;
   languageNote: boolean;       setLanguageNote: Dispatch<SetStateAction<boolean>>;
+  // AI model routing
+  scriptAnalysisProvider: string;  setScriptAnalysisProvider: Dispatch<SetStateAction<string>>;
+  verifyProvider: string;          setVerifyProvider: Dispatch<SetStateAction<string>>;
+  clipBuildProvider: string;       setClipBuildProvider: Dispatch<SetStateAction<string>>;
 }
 
 const DURATION_MAP: Record<string, number> = {
@@ -49,7 +53,12 @@ export default function ConfigPanel({
   aspectRatio, setAspectRatio,
   veoModel, setVeoModel,
   languageNote, setLanguageNote,
+  scriptAnalysisProvider, setScriptAnalysisProvider,
+  verifyProvider, setVerifyProvider,
+  clipBuildProvider, setClipBuildProvider,
 }: Props) {
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+
   const handleDurationChange = (dur: string) => {
     setDurationLabel(dur);
     setNumClips(DURATION_MAP[dur] ?? 6);
@@ -164,6 +173,57 @@ export default function ConfigPanel({
           placeholder="Brand guidelines, visual references, style notes…"
           className="field w-full resize-y rounded-xl px-4 py-3 text-sm"
         />
+      </div>
+
+      {/* ── AI Model Settings ────────────────────────────────────── */}
+      <div className="glass rounded-2xl overflow-hidden fade-up" style={{ animationDelay: "0.16s" }}>
+        <button
+          onClick={() => setAiSettingsOpen((o) => !o)}
+          className="w-full flex items-center justify-between px-5 py-4 text-left transition hover:bg-white/5"
+        >
+          <SectionLabel>🤖 AI Model Settings</SectionLabel>
+          <span className="text-white/40 text-sm select-none mb-2">{aiSettingsOpen ? "▲" : "▼"}</span>
+        </button>
+
+        {aiSettingsOpen && (
+          <div className="px-5 pb-5 grid gap-4 sm:grid-cols-2">
+            <div>
+              <FieldLabel>Script Analysis</FieldLabel>
+              <select
+                value={scriptAnalysisProvider}
+                onChange={(e) => setScriptAnalysisProvider(e.target.value)}
+                className="field w-full rounded-lg px-3 py-2.5 text-sm"
+              >
+                <option value="gemini">Gemini (default)</option>
+                <option value="anthropic">Claude (recommended)</option>
+              </select>
+            </div>
+
+            <div>
+              <FieldLabel>Prompt Verification</FieldLabel>
+              <select
+                value={verifyProvider}
+                onChange={(e) => setVerifyProvider(e.target.value)}
+                className="field w-full rounded-lg px-3 py-2.5 text-sm"
+              >
+                <option value="anthropic">Claude (recommended)</option>
+                <option value="gemini">Gemini</option>
+              </select>
+            </div>
+
+            <div>
+              <FieldLabel>Clip Prompt Building</FieldLabel>
+              <select
+                value={clipBuildProvider}
+                onChange={(e) => setClipBuildProvider(e.target.value)}
+                className="field w-full rounded-lg px-3 py-2.5 text-sm"
+              >
+                <option value="gemini">Gemini (recommended)</option>
+                <option value="anthropic">Claude</option>
+              </select>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

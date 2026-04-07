@@ -25,11 +25,12 @@ interface Props {
   onAccept: (updatedClips: ClipPrompt[]) => void;
   onSkip: () => void;
   apiBase: string;
+  provider?: string;  // "anthropic" | "gemini"
 }
 
 /* ─── Component ─────────────────────────────────────────────────────────── */
 
-export default function PromptVerifier({ clips, script, onAccept, onSkip, apiBase }: Props) {
+export default function PromptVerifier({ clips, script, onAccept, onSkip, apiBase, provider = "anthropic" }: Props) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<VerifyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +45,7 @@ export default function PromptVerifier({ clips, script, onAccept, onSkip, apiBas
       const resp = await fetch(`${apiBase}/api/verify-prompts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clips, script }),
+        body: JSON.stringify({ clips, script, provider }),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));

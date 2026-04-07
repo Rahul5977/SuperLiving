@@ -55,6 +55,11 @@ export default function Home() {
   ]);
   const [, setPhotoAnalyses] = useState<Record<string, CharacterAnalysis>>({});
 
+  // ── AI model routing ──────────────────────────────────────────────────
+  const [scriptAnalysisProvider, setScriptAnalysisProvider] = useState("gemini");
+  const [verifyProvider, setVerifyProvider] = useState("anthropic");
+  const [clipBuildProvider, setClipBuildProvider] = useState("gemini");
+
   // ── Step 0 state (Phase: analyse) ─────────────────────────────────────
   const [productionBrief, setProductionBrief] = useState("");
   const [improvedScript, setImprovedScript] = useState("");
@@ -114,7 +119,7 @@ export default function Home() {
       const resp = await fetch(`${API_BASE}/api/analyse-script`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ script, num_clips: numClips }),
+        body: JSON.stringify({ script, num_clips: numClips, provider: scriptAnalysisProvider }),
       });
 
       if (!resp.ok) {
@@ -131,7 +136,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [script, numClips]);
+  }, [script, numClips, scriptAnalysisProvider]);
 
   /* ─── Phase "analyse" → Phase "review": Build clip prompts ─────────── */
 
@@ -182,6 +187,8 @@ export default function Home() {
           language_note: languageNote,
           has_photos: usePhotos && characters.some((c) => c.name.trim() && c.file),
           production_brief: productionBrief,
+          clip_build_provider: clipBuildProvider,
+          character_sheet_provider: clipBuildProvider,
         }),
       });
 
@@ -199,7 +206,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [extraPrompt, usePhotos, characters, aspectRatio, numClips, languageNote, characterSheet, productionBrief]);
+  }, [extraPrompt, usePhotos, characters, aspectRatio, numClips, languageNote, characterSheet, productionBrief, clipBuildProvider]);
 
   /* ─── Phase 2 → Phase 2.5: Trigger Claude Verify ───────────────────── */
 
@@ -557,6 +564,12 @@ export default function Home() {
                         setVeoModel={setVeoModel}
                         languageNote={languageNote}
                         setLanguageNote={setLanguageNote}
+                        scriptAnalysisProvider={scriptAnalysisProvider}
+                        setScriptAnalysisProvider={setScriptAnalysisProvider}
+                        verifyProvider={verifyProvider}
+                        setVerifyProvider={setVerifyProvider}
+                        clipBuildProvider={clipBuildProvider}
+                        setClipBuildProvider={setClipBuildProvider}
                       />
                     </div>
                     <div className="lg:col-span-2">
@@ -645,6 +658,7 @@ export default function Home() {
                     onAccept={handleVerifyAccept}
                     onSkip={handleVerifySkip}
                     apiBase={API_BASE}
+                    provider={verifyProvider}
                   />
                 </motion.div>
               )}

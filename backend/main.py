@@ -65,9 +65,12 @@ from .api_models import (
     GenerateVideoResponse,
     RegenerateClipsRequest,
     RegenerateClipsResponse,
+    ScoreScriptRequest,
+    ScoreScriptResponse,
+    ScriptIssue,
     VerifyPromptsRequest,
     VerifyPromptsResponse,
-    ClipVerification
+    ClipVerification,
 )
 from .video_engine import stitch_clips, concat_with_normalized_cta
 
@@ -675,7 +678,8 @@ async def analyse_script(request: AnalyseScriptRequest):
     gemini_client, _ = _get_clients()
     try:
         production_brief, improved_script = analyse_script_for_production(
-            gemini_client, request.script, request.num_clips
+            gemini_client, request.script, request.num_clips,
+            provider=request.provider if request.provider != "gemini" else None,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Script analysis failed: {e}")
@@ -697,9 +701,12 @@ async def generate_prompts(request: GeneratePromptsRequest):
     gemini_client, _ = _get_clients()
 
     character_sheet = request.character_sheet
+    char_sheet_provider = request.character_sheet_provider if request.character_sheet_provider != "gemini" else None
     if not request.has_photos and not character_sheet:
         try:
-            character_sheet = build_character_sheet(gemini_client, request.script)
+            character_sheet = build_character_sheet(
+                gemini_client, request.script, provider=char_sheet_provider
+            )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Character sheet generation failed: {e}")
 
@@ -708,6 +715,7 @@ async def generate_prompts(request: GeneratePromptsRequest):
         for name, data in request.photo_analyses.items()
     }
 
+    clip_provider = request.clip_build_provider if request.clip_build_provider != "gemini" else None
     try:
         clips = build_clip_prompts(
             client=gemini_client,
@@ -721,6 +729,7 @@ async def generate_prompts(request: GeneratePromptsRequest):
             language_note=request.language_note,
             has_photos=request.has_photos,
             production_brief=request.production_brief,
+            provider=clip_provider,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prompt generation failed: {e}")
@@ -818,6 +827,9 @@ async def verify_prompts(request: VerifyPromptsRequest):
 
     gemini_client, _ = _get_clients()
     script_context = request.script if request.script else "Not provided"
+    verify_provider = request.provider  # "anthropic" | "gemini"
+
+    from .ai_router import generate_text as _gen_text
 
     # Per-clip single-object output schema avoids truncation.
     # Sending all clips in one request causes Gemini to exceed its output token
@@ -828,6 +840,7 @@ async def verify_prompts(request: VerifyPromptsRequest):
   "clip": <clip number>,
   "status": "approved" or "improved",
   "issues": ["..."],
+  "clip_score": <0-100 weighted score>,
   "improved_prompt": "Full corrected prompt, identical to input if approved."
 }"""
 
@@ -843,18 +856,27 @@ async def verify_prompts(request: VerifyPromptsRequest):
                 f"Check every rule strictly.{PER_CLIP_OUTPUT_FORMAT}"
             )
 
-            response = gemini_client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=user_message,
-                config=types.GenerateContentConfig(
-                    system_instruction=GEMINI_PROMPT_AUDITOR,
-                    response_mime_type="application/json",
+            if verify_provider == "anthropic":
+                raw = _gen_text(
+                    task="prompt_verification",
+                    system_prompt=GEMINI_PROMPT_AUDITOR,
+                    user_message=user_message,
+                    provider="anthropic",
                     temperature=0.3,
-                    max_output_tokens=16384,
-                ),
-            )
-
-            raw = (response.text or "").strip()
+                    max_tokens=16384,
+                )
+            else:
+                response = gemini_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=user_message,
+                    config=types.GenerateContentConfig(
+                        system_instruction=GEMINI_PROMPT_AUDITOR,
+                        response_mime_type="application/json",
+                        temperature=0.3,
+                        max_output_tokens=16384,
+                    ),
+                )
+                raw = (response.text or "").strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
@@ -927,4 +949,32 @@ async def verify_prompts(request: VerifyPromptsRequest):
         raise HTTPException(status_code=500, detail=f"Gemini returned invalid JSON: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Verification failed: {e}")
- 
+
+
+# ── Score script — 13-rule CPI audit ─────────────────────────────────────────
+
+@app.post("/api/score-script", response_model=ScoreScriptResponse)
+async def score_script(request: ScoreScriptRequest):
+    """
+    13-rule CPI scoring for ad scripts.
+    Returns score, per-rule issues with exact lines, and an improved script.
+    Uses Anthropic Claude by default (configurable via provider param).
+    Separate from /api/analyse-script (production brief + 8-dimension rewrite).
+    """
+    from .script_analyser import analyse_script as _score
+
+    try:
+        result = await _score(
+            raw_script=request.script,
+            provider=request.provider,
+        )
+        return ScoreScriptResponse(
+            score=result.get("score", 0),
+            issues=[ScriptIssue(**i) for i in result.get("issues", [])],
+            improved_script=result.get("improved_script", request.script),
+            hook_type=result.get("hook_type", ""),
+            tier2_score=result.get("tier2_score", 0),
+            tier2_notes=result.get("tier2_notes", ""),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Script scoring failed: {e}")
