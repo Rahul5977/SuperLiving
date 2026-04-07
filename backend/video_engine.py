@@ -231,7 +231,7 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
                      "-pix_fmt", "yuv420p",
                      "-video_track_timescale", "12800",
                      "-af", "aresample=async=1,apad",
-                     "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
+                     "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "192k",
                      "-shortest",
                      norm_path],
                     capture_output=True, text=True,
@@ -246,7 +246,7 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
                          "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                          "-pix_fmt", "yuv420p",
                          "-video_track_timescale", "12800",
-                         "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
+                         "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "192k",
                          "-shortest",
                          norm_path],
                         capture_output=True, text=True,
@@ -266,7 +266,7 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
                      "-pix_fmt", "yuv420p",
                      "-video_track_timescale", "12800",
                      "-map", "0:v:0", "-map", "1:a:0",
-                     "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
+                     "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "192k",
                      "-t", f"{vid_dur:.4f}",
                      norm_path],
                     capture_output=True, text=True,
@@ -344,7 +344,8 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
             "-map", "[vout]", "-map", "[aout]",
             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
             "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
+            "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+            "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "192k",
             "-movflags", "+faststart",
             output_path,
         ]
@@ -407,8 +408,8 @@ def stitch_clips(clip_paths: list, output_path: str, transition_sec: float = 0.3
              "-vf", "fps=24,format=yuv420p",
              "-c:v", "libx264", "-preset", "fast", "-crf", "18",
              "-pix_fmt", "yuv420p",
-             "-af", "aresample=async=1",
-             "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
+             "-af", "aresample=async=1,loudnorm=I=-16:TP=-1.5:LRA=11",
+             "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "192k",
              "-movflags", "+faststart",
              output_path],
             capture_output=True, text=True,
@@ -433,12 +434,13 @@ def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: s
     Append *cta_path* after *base_vid_path* (with optional pause),
     then write the result to *output_path*.
 
-    OPTIMIZED FOR SPEED (no 10-12s delay):
-    ──────────────────────────────────────
-    - NO blackdetect trimming (was causing 5-7s overhead)
-    - Pause set to 0s by default (was adding 300ms + extra processing)
-    - Faster encoder preset ("veryfast" instead of "fast")
-    - Direct concat without intermediate file re-encodes where possible
+    PIPELINE:
+    ─────────
+    - Blackdetect + fadeout on main video to trim trailing black
+    - Blackdetect on CTA to trim leading black frames
+    - Optional pause segment (black + silence)
+    - filter_complex concat for monotonic PTS timeline
+    - crf=18 / fast preset throughout for broadcast quality
     """
     ffmpeg_bin = _get_ffmpeg()
 
@@ -457,11 +459,11 @@ def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: s
 
     def _re_encode(src: str, dst: str, label: str) -> bool:
         """
-        Re-encode *src* to a fully normalised MP4 (FAST):
+        Re-encode *src* to a fully normalised MP4:
           • 1080×1920 yuv420p @ 24 fps  (scale-with-pad preserves AR)
-          • AAC stereo @ 44100 Hz
+          • AAC stereo 192k @ 44100 Hz
+          • libx264 preset=fast crf=18 (broadcast quality)
           • -movflags +faststart for streaming
-          • preset="veryfast" to avoid 10-12s delay
         """
         cmd = [
             ffmpeg_bin, "-y", "-i", src,
@@ -471,9 +473,9 @@ def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: s
                 f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,"
                 f"format=yuv420p,fps={TARGET_FPS}"
             ),
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
             "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "128k",
+            "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "192k",
             "-video_track_timescale", "12800",
             "-movflags", "+faststart",
             dst,
@@ -668,9 +670,10 @@ def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: s
         "-filter_complex", filter_str,
         "-map", "[vout]",
         "-map", "[aout]",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "128k",
+        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+        "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "192k",
         "-movflags", "+faststart",
         output_path,
     ]
@@ -691,10 +694,10 @@ def concat_with_normalized_cta(base_vid_path: str, cta_path: str, output_path: s
         r2 = subprocess.run(
             [ffmpeg_bin, "-y", "-f", "concat", "-safe", "0", "-i", list_file,
              "-vf", f"fps={TARGET_FPS},format=yuv420p",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
              "-pix_fmt", "yuv420p",
-             "-af", f"aresample={TARGET_AR}",
-             "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "128k",
+             "-af", f"aresample={TARGET_AR},loudnorm=I=-16:TP=-1.5:LRA=11",
+             "-c:a", "aac", "-ar", str(TARGET_AR), "-ac", str(TARGET_ACH), "-b:a", "192k",
              "-movflags", "+faststart",
              output_path],
             capture_output=True, text=True,

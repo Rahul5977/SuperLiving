@@ -130,17 +130,6 @@ class GenerateVideoResponse(BaseModel):
     message: str = ""
 
 
-# ── Job status (async polling) ────────────────────────────────────────────────
-
-class JobStatusResponse(BaseModel):
-    job_id: str
-    status: str   # "pending" | "generating" | "stitching" | "done" | "error"
-    step: str = ""
-    progress: int = 0  # 0-100
-    result: Optional[dict] = None
-    error: Optional[str] = None
-
-
 # ── POST /api/regenerate-clips ───────────────────────────────────────────────
 
 class RegenerateClipsRequest(BaseModel):
@@ -158,26 +147,6 @@ class RegenerateClipsResponse(BaseModel):
     message: str = ""
 
 
-# ── POST /api/agentic-pipeline ───────────────────────────────────────────────
-
-class CharacterProfile(BaseModel):
-    id: str
-    name: str
-    physical_baseline: str
-    outfit: str
-    reference_image_base64: str = Field(default="")
-
-
-class AgenticPipelineRequest(BaseModel):
-    script: str = Field(..., min_length=1)
-    num_clips: int = Field(default=6, ge=1, le=8)
-
-
-class AgenticPipelineResponse(BaseModel):
-    characters: list[CharacterProfile]
-    clips: list[ClipPrompt]
-    message: str = ""
-    
 # POST /api/verify-prompts
 class VerifyPromptsRequest(BaseModel):
     clips: list[ClipPrompt]

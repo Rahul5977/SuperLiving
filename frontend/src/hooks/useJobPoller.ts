@@ -170,7 +170,5 @@ export function useJobPoller({
     setActiveJobId(jobId);
   }, []);
 
-  const activeJob = jobs.find((j) => j.id === activeJobId) ?? null;
-
-  return { jobs, activeJob, activeJobId, addJob, setActive };
+  return { jobs, activeJobId, addJob, setActive };
 }

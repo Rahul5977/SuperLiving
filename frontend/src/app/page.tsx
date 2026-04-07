@@ -53,7 +53,6 @@ export default function Home() {
     { name: "", file: null },
     { name: "", file: null },
   ]);
-  const [, setPhotoAnalyses] = useState<Record<string, CharacterAnalysis>>({});
 
   // ── AI model routing ──────────────────────────────────────────────────
   const [scriptAnalysisProvider, setScriptAnalysisProvider] = useState("gemini");
@@ -166,7 +165,6 @@ export default function Home() {
           }
           const analysisData = await analysisResp.json();
           localPhotoAnalyses = analysisData.analyses || {};
-          setPhotoAnalyses(localPhotoAnalyses);
         }
       }
 
@@ -335,7 +333,6 @@ export default function Home() {
     setCharacterSheet("");
     setProductionBrief("");
     setImprovedScript("");
-    setPhotoAnalyses({});
   };
 
   /* ─── Download / Upload Prompts ────────────────────────────────────── */
@@ -418,8 +415,6 @@ export default function Home() {
   );
 
   /* ─── Render ────────────────────────────────────────────────────────── */
-
-  const showJobsPanel = true
 
   return (
     <main className="min-h-screen">
@@ -533,10 +528,10 @@ export default function Home() {
         </div>
 
         {/* ── Main layout: content + jobs sidebar ───────────────────────── */}
-        <div className={showJobsPanel ? "grid gap-6 lg:grid-cols-6" : ""}>
+        <div className="grid gap-6 lg:grid-cols-6">
 
           {/* ── Phase Router ────────────────────────────────────────────── */}
-          <div className={showJobsPanel ? "lg:col-span-4" : ""}>
+          <div className="lg:col-span-4">
             <AnimatePresence mode="wait">
 
               {phase === "input" && (
@@ -687,23 +682,21 @@ export default function Home() {
           </div>
 
           {/* ── Jobs sidebar ─────────────────────────────────────────────── */}
-          {showJobsPanel && (
-            <div className="lg:col-span-2">
-              <div
-                className="sticky top-6 rounded-2xl p-4"
-                style={{
-                  background: "rgba(255,255,255,0.03)",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                }}
-              >
-                <JobsPanel
-                  jobs={jobs}
-                  activeJobId={activeJobId}
-                  onOpenJob={handleOpenJob}
-                />
-              </div>
+          <div className="lg:col-span-2">
+            <div
+              className="sticky top-6 rounded-2xl p-4"
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              <JobsPanel
+                jobs={jobs}
+                activeJobId={activeJobId}
+                onOpenJob={handleOpenJob}
+              />
             </div>
-          )}
+          </div>
 
         </div>
 

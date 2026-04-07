@@ -12,6 +12,7 @@ from google import genai
 from google.genai import types
 
 from .prompts import (
+    CHARACTER_SHEET_SYSTEM,
     SANITIZE_VEO_SYSTEM,
     analyze_character_photo_prompt,
     build_character_sheet_prompt,
@@ -89,12 +90,6 @@ def analyze_character_photo(client, name: str, photo_bytes: bytes, mime_type: st
 def build_character_sheet(client, script: str, provider: str = None) -> str:
     """Used only when no reference photos are provided."""
     from .ai_router import generate_text
-    CHARACTER_SHEET_SYSTEM = (
-        "You are a character consistency director for SuperLiving video ads. "
-        "Given an ad script, extract each character and write a locked character sheet "
-        "with physical appearance (face, hair, age, build — NOT clothing) and outfit. "
-        "Format as plain text sections per character. Be specific and concrete."
-    )
     if provider is not None:
         return generate_text(
             task="character_sheet",
@@ -481,7 +476,12 @@ def generate_clip_from_image(
     """
     Generate clip 1: standard I2V using character reference photo.
     """
-    config = types.GenerateVideosConfig(aspect_ratio=ar, number_of_videos=1)
+    config = types.GenerateVideosConfig(
+        aspect_ratio=ar,
+        number_of_videos=1,
+        resolution="1080p",
+        enhance_prompt=True,
+    )
     operation = video_client.models.generate_videos(
         model=model,
         prompt=prompt,
@@ -622,7 +622,12 @@ def generate_clip_with_frame_context(
     last_frame_bytes = video_engine.extract_last_frame(prev_video_path)
     logger.info(f"  ✅ Last frame extracted ({len(last_frame_bytes)//1024} KB) → I2V starting image")
 
-    config = types.GenerateVideosConfig(aspect_ratio=ar, number_of_videos=1)
+    config = types.GenerateVideosConfig(
+        aspect_ratio=ar,
+        number_of_videos=1,
+        resolution="1080p",
+        enhance_prompt=True,
+    )
     operation = video_client.models.generate_videos(
         model=model,
         prompt=updated_prompt,
@@ -641,7 +646,12 @@ def generate_clip_text_only(
     clip_num: int, total: int,
 ):
     """Fallback: generate with text prompt only."""
-    config = types.GenerateVideosConfig(aspect_ratio=ar, number_of_videos=1)
+    config = types.GenerateVideosConfig(
+        aspect_ratio=ar,
+        number_of_videos=1,
+        resolution="1080p",
+        enhance_prompt=True,
+    )
     operation = video_client.models.generate_videos(model=model, prompt=prompt, config=config)
     operation = poll_operation(video_client, operation, f"Rendering clip {clip_num}/{total}")
     return operation

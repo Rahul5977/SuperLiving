@@ -10,8 +10,8 @@ DEFAULTS:
   prompt_verification → Claude claude-sonnet-4-5 (best rule adherence)
   clip_prompt_build  → Gemini gemini-2.5-pro (best long Hindi generation)
   sanitization       → Gemini gemini-2.0-flash (fast, cheap)
-  character_analysis → Gemini gemini-2.5-pro (multimodal, image input)
   character_sheet    → Gemini gemini-2.5-pro (multimodal context)
+  character_analysis → Gemini (direct client, multimodal image input — not routed here)
 
 Override any default by passing provider="anthropic" or provider="gemini"
 to any function that accepts it.
@@ -38,7 +38,6 @@ TASK_DEFAULTS = {
     "prompt_verification": "anthropic",
     "clip_prompt_build":   "gemini",
     "sanitization":        "gemini",
-    "character_analysis":  "gemini",
     "character_sheet":     "gemini",
 }
 
@@ -48,7 +47,6 @@ TASK_MODELS = {
     "prompt_verification": {"anthropic": CLAUDE_SONNET, "gemini": GEMINI_FLASH},
     "clip_prompt_build":   {"anthropic": CLAUDE_SONNET, "gemini": GEMINI_PRO},
     "sanitization":        {"anthropic": CLAUDE_HAIKU,  "gemini": GEMINI_FLASH},
-    "character_analysis":  {"anthropic": CLAUDE_SONNET, "gemini": GEMINI_PRO},
     "character_sheet":     {"anthropic": CLAUDE_SONNET, "gemini": GEMINI_PRO},
 }
 

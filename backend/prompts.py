@@ -641,6 +641,14 @@ Rules for improved_prompt:
 - NEVER remove acronym hyphens like P-C-O-S, I-V-F, B-P — these are intentional pronunciation guides"""
 
 
+CHARACTER_SHEET_SYSTEM: str = (
+    "You are a character consistency director for SuperLiving video ads. "
+    "Given an ad script, extract each character and write a locked character sheet "
+    "with physical appearance (face, hair, age, build — NOT clothing) and outfit. "
+    "Format as plain text sections per character. Be specific and concrete."
+)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # DYNAMIC PROMPTS  (accept runtime parameters — call as functions)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1192,8 +1200,12 @@ Use this exact section order:
 5. ACTION: [ONE emotional state + 1–2 micro-movements + SETTLE instruction.
    "चेहरे पर [भाव]। बोलते हुए [1–2 सूक्ष्म हलचल]।
    ⚠️ आखिरी 1–2 सेकंड: REST POSITION में स्थिर — सीधे कैमरे की ओर, तटस्थ मुद्रा, हाथ फ्रेम से बाहर।"]
-6. DIALOGUE: [16–18 words. VERBATIM from script — every word must be spoken. चरित्र: "(बातचीत के लहजे में...) संवाद"]
-7. AUDIO: [BGM description — same mood/tempo across all clips unless story requires shift]
+6. DIALOGUE: [16–18 words. VERBATIM from script — every word must be spoken. चरित्र: "(बातचीत के लहजे में, warm और clear आवाज़ में, confidently articulated) संवाद"]
+7. AUDIO: कोई बैकग्राउंड म्यूजिक नहीं। केवल चरित्र की आवाज़।
+   आवाज़ की quality: crystal-clear, studio-quality dialogue recording।
+   कोई echo नहीं, कोई reverb नहीं, कोई background hiss नहीं।
+   आवाज़ naturally warm और close-mic है — जैसे phone के पास बात हो रही हो।
+   Lip-sync: perfectly synchronized to every syllable।
 8. CAMERA: [TIGHT MCU (chin to mid-chest) + eye-level + "Ultra-sharp focus, 8k resolution,
    highly detailed. कैमरा बिल्कुल स्थिर। हाथ फ्रेम में नहीं दिखेंगे।"]
 9. LIGHTING: [Dual source description. "⚠️ आँखें clearly visible। कोई काले eye socket
@@ -1518,8 +1530,12 @@ Use this exact section order:
 5. ACTION: [ONE emotional state + 1–2 micro-movements + SETTLE instruction.
    "चेहरे पर [भाव]। बोलते हुए [1–2 सूक्ष्म हलचल]।
    ⚠️ आखिरी 1–2 सेकंड: REST POSITION में स्थिर — सीधे कैमरे की ओर, तटस्थ मुद्रा, हाथ फ्रेम से बाहर।"]
-6. DIALOGUE: [16–18 words. VERBATIM from script. चरित्र: "(बातचीत के लहजे में...) संवाद"]
-7. AUDIO: [BGM description — same mood/tempo across all clips unless story requires shift]
+6. DIALOGUE: [16–18 words. VERBATIM from script. चरित्र: "(बातचीत के लहजे में, warm और clear आवाज़ में, confidently articulated) संवाद"]
+7. AUDIO: कोई बैकग्राउंड म्यूजिक नहीं। केवल चरित्र की आवाज़।
+   आवाज़ की quality: crystal-clear, studio-quality dialogue recording।
+   कोई echo नहीं, कोई reverb नहीं, कोई background hiss नहीं।
+   आवाज़ naturally warm और close-mic है — जैसे phone के पास बात हो रही हो।
+   Lip-sync: perfectly synchronized to every syllable।
 8. CAMERA: [TIGHT MCU (chin to mid-chest) + eye-level + "Ultra-sharp focus, 8k resolution,
    highly detailed. कैमरा बिल्कुल स्थिर। हाथ फ्रेम में नहीं दिखेंगे।"]
 9. LIGHTING: [Dual source. Exposure lock line. "⚠️ आँखें clearly visible। कोई काले eye socket
